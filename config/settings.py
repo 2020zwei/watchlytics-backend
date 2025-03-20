@@ -51,6 +51,13 @@ INSTALLED_APPS = [
 
 PROJECTAPPS = [
     'auth_',
+    'inventory',
+    'transactions',
+    'customers',
+    'market_insights',
+    'subscription',
+    'invoices',
+    'shipping',
 ]
 
 INSTALLED_APPS += PROJECTAPPS
@@ -182,7 +189,6 @@ SIMPLE_JWT = {
 
 # Use email as the username field
 AUTH_USER_MODEL = 'auth_.User'
-# AUTH_USER_MODEL = 'accounts.User'
 
 TEMPLATES = [
     {

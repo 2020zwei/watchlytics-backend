@@ -87,6 +87,8 @@ class ProfileView(APIView):
             })
 
 class ForgotPasswordView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
         if serializer.is_valid():
@@ -95,6 +97,8 @@ class ForgotPasswordView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class PasswordResetConfirmView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request, uid, token):
         serializer = PasswordResetConfirmSerializer(
             data=request.data, context={"uid": uid, "token": token}

@@ -12,6 +12,14 @@ def get_profile_image_path(instance, filename):
     filename = f"{uuid.uuid4()}.{ext}"
     return os.path.join('profile_images', filename)
 class User(AbstractUser):
+
+    USER_TYPE_CHOICES = (
+        ('admin', 'Admin'),
+        ('trader', 'Trader'),
+        ('accountant', 'Accountant'),
+        ('analyst', 'Analyst'),
+    )
+    
     username = None
     email = models.EmailField(unique=True)
     first_name = models.CharField(max_length=30, blank=True, null=True)
@@ -25,6 +33,10 @@ class User(AbstractUser):
     is_admin = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    user_type = models.CharField(max_length=20, choices=USER_TYPE_CHOICES, default='trader')
+    phone_number = models.CharField(max_length=20, blank=True, null=True)
+    company_name = models.CharField(max_length=100, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name']
