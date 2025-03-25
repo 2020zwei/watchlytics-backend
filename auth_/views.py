@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 from .serializers import UserSerializer
 from .serializers import CustomAuthTokenSerializer 
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework import status, permissions
 from django.db import IntegrityError
@@ -24,6 +25,7 @@ from .serializers import (
 User = get_user_model()
 
 class SignUpView(CreateAPIView):
+    throttle_classes = [AnonRateThrottle]
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [AllowAny]
@@ -68,6 +70,7 @@ class SignInView(APIView):
 class ProfileView(APIView):
     permission_classes=[IsAuthenticated]
     serializer_class=UserSerializer
+    throttle_classes = [AnonRateThrottle, UserRateThrottle]
 
     def get(self, request, *args, **kwargs):
         try:

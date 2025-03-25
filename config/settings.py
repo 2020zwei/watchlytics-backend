@@ -29,7 +29,7 @@ SECRET_KEY = 'django-insecure-l%8a#l_y^gaqt7t6@se5frey!is*z32!1o5!!j%^mgv76=(j1k
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['18.130.73.58']
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -174,6 +174,10 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '10/min',
+        'user': '100/day',
+    },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
