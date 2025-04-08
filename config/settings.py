@@ -99,7 +99,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-if os.getenv('USE_PROD_DATABASE', False):
+if os.getenv('USE_PROD_DATABASE', False).lower() == 'true':
 
     DATABASES = {
         'default': {
@@ -114,8 +114,12 @@ if os.getenv('USE_PROD_DATABASE', False):
 else:
     DATABASES = {
         'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': 'watchlytics_database',
+            'USER': 'postgres',
+            'PASSWORD': 'postgres',
+            'HOST': 'localhost',
+            'PORT': '5432',
         }
     }
 
@@ -212,16 +216,13 @@ TEMPLATES = [
 
 
 # Email settings
-BRAVO_API_KEY = os.getenv('BREVO_API_KEY', 'default_if_missing')
-BREVO_EMAIL_ENDPOINT = "https://api.brevo.com/v3/smtp/email"
-BRAVO_TOKEN_REFRESH_ENDPOINT = 'https://api.brevo.com/v3/oauth/token'
-DEFAULT_FROM_EMAIL='ahad518660@gnmail.com'
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp-relay.brevo.com'
 EMAIL_PORT = 587
-EMAIL_USE_TLS = True  
-EMAIL_HOST_USER = os.getenv('ahad51860@gmail.com')
-EMAIL_HOST_PASSWORD =os.getenv('BRAVO_API_KEY', 'default_if_missing')
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = '839e30001@smtp-brevo.com'
+EMAIL_HOST_PASSWORD = 'c3q1yQ4HS8UEjpvG'
+DEFAULT_FROM_EMAIL = 'info@once-more.com' 
 
 
 LOGGING = {

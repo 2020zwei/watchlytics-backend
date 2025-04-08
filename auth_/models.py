@@ -37,6 +37,7 @@ class User(AbstractUser):
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     company_name = models.CharField(max_length=100, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
+    is_email_verified = models.BooleanField(default=False)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name']

@@ -2,6 +2,12 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.core.mail import send_mail
+from django.template.loader import render_to_string
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.utils.http import urlsafe_base64_encode
+from django.utils.encoding import force_bytes
+from rest_framework import serializers
 from django.utils.encoding import force_bytes, force_str
 
 User = get_user_model()
@@ -69,7 +75,7 @@ class ForgotPasswordSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
     def validate(self, data):
-        user = User.objects.filter(email=data["email"]).first()
+        user = get_user_model().objects.filter(email=data["email"]).first()
         if not user:
             raise serializers.ValidationError("No user found with this email.")
 
@@ -77,7 +83,29 @@ class ForgotPasswordSerializer(serializers.Serializer):
         token = token_generator.make_token(user)
         uid = urlsafe_base64_encode(force_bytes(user.id))
 
-        reset_url = f"http://localhost:3000/reset-password/{uid}/{token}/"
-        # send_password_reset_email(user.email, reset_url, user.get_full_name())
+        reset_url = self.generate_reset_url(uid, token)
+        self.send_password_reset_email(user, reset_url)
 
         return {"message": "Password reset email sent successfully"}
+
+    def generate_reset_url(self, uid, token):
+        reset_url = f"{self.context['request'].build_absolute_uri('/reset-password/')}{uid}/{token}/"
+        return reset_url
+
+    def send_password_reset_email(self, user, reset_url):
+        email_subject = "Reset your password"
+        email_message = render_to_string(
+            "email/password_reset_email.html",
+            {
+                "user": user,
+                "reset_url": reset_url,
+            }
+        )
+
+        send_mail(
+            subject=email_subject,
+            message=email_message,
+            from_email="info@once-more.com",
+            recipient_list=[user.email],
+            fail_silently=False
+        )
