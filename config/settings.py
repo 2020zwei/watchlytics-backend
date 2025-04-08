@@ -14,6 +14,8 @@ from pathlib import Path
 import os
 import sys
 from datetime import timedelta
+from dotenv import load_dotenv
+load_dotenv()
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -220,8 +222,8 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp-relay.brevo.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = '839e30001@smtp-brevo.com'
-EMAIL_HOST_PASSWORD = 'c3q1yQ4HS8UEjpvG'
+EMAIL_HOST_USER = os.getenv('BREVO_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('BREVO_PASSWORD', '')
 DEFAULT_FROM_EMAIL = 'info@once-more.com' 
 
 
