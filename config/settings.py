@@ -106,10 +106,10 @@ if os.getenv('USE_PROD_DATABASE', False).lower() == 'true':
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': 'watchlytic',
-            'USER': 'postgres',
+            'NAME': os.getenv('PRODUCTION_DATABASE_NAME', ''),
+            'USER': os.getenv('PRODUCTION_DATABASE_USER', ''),
             'PASSWORD': os.getenv('PRODUCTION_DATABASE_PASSWORD', ''),
-            'HOST': 'database-watch-dev.clmy8iqsehrf.eu-west-2.rds.amazonaws.com',
+            'HOST': os.getenv('PRODUCTION_DATABASE_HOST', ''),
             'PORT': '5432',
         }
     }
