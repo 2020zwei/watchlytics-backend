@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'djoser',
     'corsheaders',
+    'storages',
 ]
 
 PROJECTAPPS = [
@@ -187,7 +188,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
-    'EXCEPTION_HANDLER': 'auth_.handler.custom_exception_handler',
+    'EXCEPTION_HANDLER': 'auth_.utils.custom_exception_handler',
 }
 
 SIMPLE_JWT = {
@@ -255,6 +256,16 @@ LOGGING = {
             'level': 'INFO',
             'propagate': True,
         },
+    'boto3': {
+        'handlers': ['console'],
+        'level': 'DEBUG',
+        'propagate': True,
+    },
+    'botocore': {
+        'handlers': ['console'],
+        'level': 'DEBUG',
+        'propagate': True,
+    },
     },
 }
 
@@ -269,3 +280,14 @@ if not DEBUG:
     CSRF_COOKIE_SECURE = True
 
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "njf1NWUwNd9jaYQM3Fb8YZrOlrfxKGW3J3it3inJVMQ=")
+
+AWS_S3_CUSTOM_DOMAIN = 'watchlytics.s3.eu-west-2.amazonaws.com'
+
+DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME")
+AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME")
+AWS_S3_FILE_OVERWRITE = False
+AWS_DEFAULT_ACL = None
+AWS_LOCATION = 'static'

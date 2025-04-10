@@ -15,7 +15,7 @@ User = get_user_model()
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['email', 'first_name', 'last_name', 'password']
+        fields = ['email', 'first_name', 'last_name', 'profile_picture', 'phone_number', 'password']
         extra_kwargs = {'password': {'write_only': True}}
 
     def create(self, validated_data):
@@ -109,3 +109,21 @@ class ForgotPasswordSerializer(serializers.Serializer):
             recipient_list=[user.email],
             fail_silently=False
         )
+
+class UserUpdateSerializer(serializers.ModelSerializer):
+    profile_picture=serializers.ImageField(required=False)
+
+    class Meta:
+        model = User
+        fields = [
+            'first_name', 'last_name', 'profile_picture', 'phone_number',
+            'company_name', 'address', 'user_type'
+        ]
+        extra_kwargs = {
+            'first_name': {'required': False},
+            'last_name': {'required': False},
+            'phone_number': {'required': False},
+            'company_name': {'required': False},
+            'address': {'required': False},
+            'user_type': {'required': False},
+        }
