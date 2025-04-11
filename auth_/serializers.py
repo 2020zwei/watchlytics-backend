@@ -91,7 +91,7 @@ class ForgotPasswordSerializer(serializers.Serializer):
 
     def generate_reset_url(self, uid, token):
         # reset_url = f"{self.context['request'].build_absolute_uri('/reset-password/')}{uid}/{token}/"
-        reset_url = f"{os.getenv('RESET_URL', '')}{uid}/{token}/"
+        reset_url = f"{os.getenv('RESET_URL', '')}link={uid}/{token}/"
         return reset_url
 
     def send_password_reset_email(self, user, reset_url):
