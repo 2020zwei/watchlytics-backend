@@ -175,3 +175,40 @@ class UpdateProfileView(APIView):
             serializer.save()
             return Response({'message': 'Profile updated successfully', 'user': serializer.data}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+class DeleteUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    class InputSerializer(serializers.Serializer):
+        password = serializers.CharField(
+            style={'input_type': 'password'},
+            write_only=True,
+            required=True
+        )
+        
+        def validate_password(self, value):
+            user = self.context.get('request').user
+            if not user.check_password(value):
+                raise serializers.ValidationError("Incorrect password. Please enter your current password to confirm account deletion.")
+            return value
+    
+    def post(self, request):
+        serializer = self.InputSerializer(data=request.data, context={'request': request})
+        
+        if serializer.is_valid():
+            user = request.user
+            
+            try:
+                # Delete the user
+                user.delete()
+                return Response(
+                    {"message": "Your account has been successfully deleted."},
+                    status=status.HTTP_200_OK
+                )
+            except Exception as e:
+                return Response(
+                    {"error": f"Failed to delete account: {str(e)}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
