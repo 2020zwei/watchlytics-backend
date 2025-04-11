@@ -9,6 +9,7 @@ from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from rest_framework import serializers
 from django.utils.encoding import force_bytes, force_str
+import os
 
 User = get_user_model()
 
@@ -89,7 +90,8 @@ class ForgotPasswordSerializer(serializers.Serializer):
         return {"message": "Password reset email sent successfully"}
 
     def generate_reset_url(self, uid, token):
-        reset_url = f"{self.context['request'].build_absolute_uri('/reset-password/')}{uid}/{token}/"
+        # reset_url = f"{self.context['request'].build_absolute_uri('/reset-password/')}{uid}/{token}/"
+        reset_url = f"{os.getenv('RESET_URL', '')}{uid}/{token}/"
         return reset_url
 
     def send_password_reset_email(self, user, reset_url):
