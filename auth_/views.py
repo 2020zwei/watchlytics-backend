@@ -73,6 +73,9 @@ class CustomAuthTokenSerializer(serializers.Serializer):
 
         user = get_user_model().objects.filter(email=email).first()
 
+        if not user:
+            raise serializers.ValidationError("Invalid credentials")
+
         if not user.is_email_verified:
             raise serializers.ValidationError("Email not verified. Please verify your email before logging in.")
 
