@@ -5,12 +5,28 @@ from .managers import UserManager
 import uuid
 from django.conf import settings
 from django.core.validators import FileExtensionValidator
+from django.core.exceptions import ValidationError
+from django.core.files.storage import default_storage
+
 import os
 
 def get_profile_image_path(instance, filename):
     ext = filename.split('.')[-1]
-    filename = f"{uuid.uuid4()}.{ext}"
-    return os.path.join('profile_images', filename)
+    user_id = instance.pk or uuid.uuid4().hex
+    return f'profile_pictures/user_{user_id}/profile.{ext}'
+
+def validate_name(value):
+    if value and value.isdigit():
+        raise ValidationError("Name cannot consist of only numbers.")
+
+def validate_password(value):
+    if len(value) < 8:
+        raise ValidationError("Password must be at least 8 characters long.")
+    if not any(char.isdigit() for char in value):
+        raise ValidationError("Password must contain at least one number.")
+    if not any(char.isalpha() for char in value):
+        raise ValidationError("Password must contain at least one letter.")
+
 class User(AbstractUser):
 
     USER_TYPE_CHOICES = (
@@ -22,13 +38,24 @@ class User(AbstractUser):
     
     username = None
     email = models.EmailField(unique=True)
-    first_name = models.CharField(max_length=30, blank=True, null=True)
-    last_name = models.CharField(max_length=30, blank=True, null=True)
+    first_name = models.CharField(
+        max_length=30,
+        blank=True, 
+        null=True,
+        validators=[validate_name]
+    )
+    last_name = models.CharField(
+        max_length=30,
+        blank=True, 
+        null=True,
+        validators=[validate_name]
+    )
     profile_picture = models.ImageField(
-        upload_to=get_profile_image_path,
+        upload_to="profile_pictures/",
         null=True,
         blank=True,
-        validators=[FileExtensionValidator(['jpg', 'jpeg', 'png'])]
+        validators=[FileExtensionValidator(['jpg', 'jpeg', 'png'])],
+        storage=default_storage
     )
     is_admin = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
@@ -38,6 +65,10 @@ class User(AbstractUser):
     company_name = models.CharField(max_length=100, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     is_email_verified = models.BooleanField(default=False)
+    password = models.CharField(
+        max_length=128,
+        validators=[validate_password]
+        )
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name']

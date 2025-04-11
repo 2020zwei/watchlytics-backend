@@ -4,7 +4,7 @@ cffi
 charset-normalizer
 cryptography
 defusedxml
-Django
+Django==4.2.7
 django-cors-headers
 django-extensions
 django-filter
@@ -16,7 +16,6 @@ idna
 inflection
 oauthlib
 packaging
-pillow
 psycopg2-binary
 pycparser
 PyJWT
@@ -32,3 +31,6 @@ sqlparse
 typing_extensions
 uritemplate
 urllib3
+boto3==1.34.3
+django-storages==1.14.2
+Pillow==10.1.0
