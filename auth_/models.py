@@ -4,7 +4,7 @@ from django.utils.translation import gettext_lazy as _
 from .managers import UserManager
 import uuid
 from django.conf import settings
-from django.core.validators import FileExtensionValidator
+from django.core.validators import FileExtensionValidator,  RegexValidator
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 
@@ -56,6 +56,19 @@ class User(AbstractUser):
         blank=True,
         validators=[FileExtensionValidator(['jpg', 'jpeg', 'png'])],
         storage=default_storage
+    )
+    cover_picture = models.ImageField(
+        upload_to="cover_pictures/",
+        null=True,
+        blank=True,
+        validators=[FileExtensionValidator(['jpg', 'jpeg', 'png'])],
+        storage=default_storage
+    )
+    client_id = models.CharField(
+        max_length=10,
+        validators=[RegexValidator(r'^\d{8,10}$', message="Client ID must be 8 to 10 digits")],
+        blank=True,
+        null=True
     )
     is_admin = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
