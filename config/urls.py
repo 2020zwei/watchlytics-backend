@@ -27,6 +27,7 @@ from django.conf.urls.static import static
 from rest_framework import permissions
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
+from django.views.generic import RedirectView
 
 
 schema_view = get_schema_view(
@@ -43,6 +44,7 @@ schema_view = get_schema_view(
 )
 
 urlpatterns = [
+    path('', RedirectView.as_view(url='/admin/', permanent=False)),
     path('admin/', admin.site.urls),
     path('api/auth/', include('auth_.urls')),
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
@@ -51,7 +53,7 @@ urlpatterns = [
     path('api/v1/transactions/', include('transactions.urls')),
     path('api/v1/customers/', include('customers.urls')),
     path('api/v1/market-insights/', include('market_insights.urls')),
-    path('api/v1/subscriptions/', include('subscription.urls')),
+    path('api/', include('subscription.urls')),
     path('api/v1/invoices/', include('invoices.urls')),
     path('api/v1/shipping/', include('shipping.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

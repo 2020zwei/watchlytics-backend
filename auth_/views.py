@@ -113,20 +113,31 @@ class ProfileView(APIView):
 
     def get(self, request, *args, **kwargs):
         try:
-            user=request.user
-            profile=User.objects.filter(id=user.id).first()
-            serializers=UserSerializer(profile)
+            profile = User.objects.filter(id=request.user.id).first()
+            
+            if not profile:
+                return Response(
+                    {
+                        'message': 'User profile not found'
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+                
+            serializers = UserSerializer(profile)
             return Response(
                 {
-                   'message': "Profile retreive successfully",
+                    'message': "Profile retrieved successfully",
                     'data': serializers.data,
-
-                }
+                },
+                status=status.HTTP_200_OK
             )
         except Exception as e:
-            return Response({
-                'message': str(e)
-            })
+            return Response(
+                {
+                    'message': f'An error occurred: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]

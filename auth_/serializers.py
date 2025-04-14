@@ -54,6 +54,8 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         if not PasswordResetTokenGenerator().check_token(user, token):
             raise serializers.ValidationError("Invalid token.")
         
+        if user.check_password(data["password"]):
+            raise serializers.ValidationError({"password": "New password cannot be the same as the current password."})
         user.set_password(data["password"])
         user.save()
         return {"message": "Password updated successfully"}
