@@ -117,18 +117,35 @@ class ForgotPasswordSerializer(serializers.Serializer):
 class UserUpdateSerializer(serializers.ModelSerializer):
     profile_picture=serializers.ImageField(required=False)
     cover_picture=serializers.ImageField(required=False)
+    password = serializers.CharField(write_only=True, required=False, allow_blank=False)
+    confirm_password = serializers.CharField(write_only=True, required=False, allow_blank=False)
 
     class Meta:
         model = User
         fields = [
             'first_name', 'last_name', 'profile_picture', 'phone_number',
-            'company_name', 'address', 'user_type', "cover_picture", "client_id"
+            'company_name', 'address', 'user_type', 'cover_picture',
+            'client_id', 'password', 'confirm_password'
         ]
-        extra_kwargs = {
-            'first_name': {'required': False},
-            'last_name': {'required': False},
-            'phone_number': {'required': False},
-            'company_name': {'required': False},
-            'address': {'required': False},
-            'user_type': {'required': False},
-        }
+
+    def validate(self, data):
+        password = data.get('password')
+        confirm_password = data.get('confirm_password')
+        print("Password fields:", password, confirm_password)
+
+        if password and password != confirm_password:
+            raise serializers.ValidationError({"password": "Passwords do not match."})
+        return data
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        validated_data.pop('confirm_password', None)
+        print("Update called with:", validated_data)
+
+        instance = super().update(instance, validated_data)
+
+        if password:
+            instance.set_password(password)
+            instance.save()
+            print("Password updated!")
+        return instance
