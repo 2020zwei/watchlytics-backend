@@ -169,14 +169,14 @@ class VerifyEmailView(APIView):
             uid = urlsafe_base64_decode(uidb64).decode()
             user = User.objects.get(pk=uid)
         except (User.DoesNotExist, ValueError, TypeError, OverflowError):
-            return redirect(f"{os.getenv('RESET_URL', '')}/email-verification?status=invalid")
+            return redirect(f"{os.getenv('ORIGIN_URL', '')}")
 
         if default_token_generator.check_token(user, token):
             user.is_email_verified = True
             user.save()
-            return redirect(f"{os.getenv('RESET_URL', '')}/email-verification?status=success")
+            return redirect(f"{os.getenv('ORIGIN_URL', '')}")
         else:
-            return redirect(f"{os.getenv('RESET_URL', '')}/email-verification?status=expired")
+            return redirect(f"{os.getenv('ORIGIN_URL', '')}")
         
 
 class UpdateProfileView(APIView):
