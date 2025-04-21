@@ -12,11 +12,13 @@ from datetime import timedelta
 from auth_.utils import CustomException
 from subscription.stripe_pay import make_stripe_order_payment, validate_stripe_fields, get_user_subscriptions_by_status
 from subscription.stripe_processor import StripeEventProcessor
+from .pagination import CustomPagination
 
 class PlanListAPIView(generics.ListAPIView):
     queryset = Plan.objects.all()
     serializer_class = PlanSerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = CustomPagination 
 
     def get(self, request, *args, **kwargs):
         response = super().get(request, *args, **kwargs)
