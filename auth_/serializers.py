@@ -14,13 +14,17 @@ import os
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
+    date_joined = serializers.SerializerMethodField()
     class Meta:
         model = User
-        fields = ['email', 'first_name', 'last_name', 'profile_picture', 'client_id', 'phone_number', 'cover_picture', 'password']
+        fields = ['email', 'first_name', 'last_name', 'profile_picture', 'client_id', 'phone_number', 'date_joined', 'cover_picture', 'password']
         extra_kwargs = {'password': {'write_only': True}}
 
     def create(self, validated_data):
         return User.objects.create_user(**validated_data)
+    
+    def get_date_joined(self, obj):
+        return obj.date_joined.strftime("%d %B, %Y")
 
 class CustomAuthTokenSerializer(serializers.Serializer):
     email = serializers.EmailField()
