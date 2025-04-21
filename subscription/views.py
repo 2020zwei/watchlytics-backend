@@ -18,6 +18,13 @@ class PlanListAPIView(generics.ListAPIView):
     serializer_class = PlanSerializer
     permission_classes = [permissions.AllowAny]
 
+    def get(self, request, *args, **kwargs):
+        response = super().get(request, *args, **kwargs)
+        response["Access-Control-Allow-Origin"] = "*"
+        response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
+
 
 class PlanDetailAPIView(generics.RetrieveAPIView):
     queryset = Plan.objects.all()
