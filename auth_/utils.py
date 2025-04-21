@@ -3,15 +3,26 @@ from rest_framework.response import Response
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed, NotAuthenticated
+from rest_framework import status as statuses
+from django.http import Http404
+
+
+class CustomException(Exception):
+    __slots__ = ['data', 'status']
+
+    def __init__(self, data, status=statuses.HTTP_400_BAD_REQUEST):
+        self.status = status
+        self.data = data
 
 def custom_exception_handler(exc, context):
+    if isinstance(exc, CustomException):
+        return Response(
+            {"message": exc.data},
+            status=exc.status
+        )
+
     response = exception_handler(exc, context)
-    if isinstance(exc, (AuthenticationFailed, NotAuthenticated)):
-        return Response({
-            'message': 'Authentication credentials were not provided or invalid',
-            'status_code': status.HTTP_401_UNAUTHORIZED
-        }, status=status.HTTP_401_UNAUTHORIZED)
-    
+
     if response is not None and hasattr(exc, 'detail'):
         user_friendly_errors = {}
         

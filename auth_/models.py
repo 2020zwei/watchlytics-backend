@@ -78,6 +78,7 @@ class User(AbstractUser):
     company_name = models.CharField(max_length=100, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     is_email_verified = models.BooleanField(default=False)
+    stripe_customer_id = models.CharField(max_length=255, blank=True, null=True)
     password = models.CharField(
         max_length=128,
         validators=[validate_password]
