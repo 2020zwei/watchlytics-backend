@@ -13,12 +13,24 @@ from auth_.utils import CustomException
 from subscription.stripe_pay import make_stripe_order_payment, validate_stripe_fields, get_user_subscriptions_by_status
 from subscription.stripe_processor import StripeEventProcessor
 from .pagination import CustomPagination
+from django.db.models import Case, When, Value, IntegerField
 
 class PlanListAPIView(generics.ListAPIView):
-    queryset = Plan.objects.all()
     serializer_class = PlanSerializer
     permission_classes = [permissions.AllowAny]
     pagination_class = CustomPagination 
+    
+    def get_queryset(self):
+        return Plan.objects.annotate(
+            custom_order=Case(
+                When(name='FREE', then=Value(1)),
+                When(name='BASIC', then=Value(2)),
+                When(name='ADVANCED', then=Value(3)),
+                When(name='PRO', then=Value(4)),
+                default=Value(5),
+                output_field=IntegerField()
+            )
+        ).order_by('custom_order')
 
     def get(self, request, *args, **kwargs):
         response = super().get(request, *args, **kwargs)
