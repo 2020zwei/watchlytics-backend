@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 from django.utils import timezone
 from datetime import timedelta
 from auth_.utils import CustomException
-from subscription.stripe_pay import make_stripe_order_payment, validate_stripe_fields, get_user_subscriptions_by_status
+from subscription.stripe_pay import make_stripe_order_payment, validate_stripe_fields, get_user_subscriptions_by_status, get_payment_method_id, attach_payment_method, modify_subscription
 from subscription.stripe_processor import StripeEventProcessor
 from .pagination import CustomPagination
 from django.db.models import Case, When, Value, IntegerField
@@ -96,28 +96,47 @@ class StripePayment(APIView):
         except Exception as e:
             raise CustomException({"message": str(e)})
 
-    def modify_subscription(self, user, new_plan_id):
+    def modify_subscription(self, user, new_plan_id, payment_method_token=None):
         try:
             subscription = Subscription.objects.filter(user=user, is_active=True).first()
             
             if not subscription or not subscription.stripe_subscription_id:
                 raise CustomException("Subscription not found")
-                
-            stripe_subscription = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
-            subscription_item_id = stripe_subscription['items']['data'][0]['id']
             
-            response = stripe.Subscription.modify(
-                subscription.stripe_subscription_id,
-                cancel_at_period_end=False,
-                proration_behavior="always_invoice",
-                items=[{
-                    "id": subscription_item_id,
-                    "price": new_plan_id
-                }],
-                metadata={"price_id": new_plan_id, "is_upgrade": True}
+            payment_method_id = None
+            if payment_method_token:
+                payment_result = get_payment_method_id(payment_method_token)
+                if not payment_result.get('status'):
+                    raise CustomException(f"Invalid payment method: {payment_result.get('result').user_message}")
+                
+                payment_method_id = payment_result.get('result')
+                
+                if user.stripe_customer_id:
+                    attach_result = attach_payment_method(user.stripe_customer_id, payment_method_id)
+                    if not attach_result.get('status'):
+                        raise CustomException(f"Could not attach payment method: {attach_result.get('result').user_message}")
+            
+            modify_result = modify_subscription(
+                subscription.stripe_subscription_id, 
+                new_plan_id,
+                payment_method_id
             )
             
+            if not modify_result.get('status'):
+                if modify_result.get('card_declined'):
+                    raise CustomException(f"Card declined: {modify_result.get('message')}")
+                else:
+                    error_message = modify_result.get('result').user_message
+                    raise CustomException(f"Error modifying subscription: {error_message}")
+            
+            plan = Plan.objects.filter(stripe_price_id=new_plan_id).first()
+            if plan:
+                subscription.plan = plan
+                subscription.save()
+                
             return True
+        except CustomException as e:
+            raise e
         except Exception as e:
             raise CustomException(str(e))
 
@@ -167,15 +186,23 @@ class StripePayment(APIView):
                 return Response(response, status.HTTP_400_BAD_REQUEST)
 
             if existing_subscription:
-                get_response_data = self.modify_subscription(user, price_id)
-                if get_response_data is False:
-                    message = 'Problem with your plan change. Please contact customer support or try again after logout.'
-                    response = {'success': False, 'message': message}
+                try:
+                    is_valid = validate_stripe_fields({
+                        **request.data,
+                        'is_modification': 'true'
+                        })
                     
-                    return Response(response, status.HTTP_400_BAD_REQUEST)
-                else:
+                    payment_method_token = request.data.get('payment_method_token')
+                    self.modify_subscription(user, price_id, payment_method_token)
                     return Response({'success': True, 'message': "Subscription updated successfully"},
-                                   status.HTTP_200_OK)
+                            status.HTTP_200_OK)
+                except CustomException as e:
+                    response = {
+                        'success': False, 
+                        'message': str(e),
+                        'card_declined': 'card declined' in str(e).lower()
+                        }
+                    return Response(response, status.HTTP_400_BAD_REQUEST)
             else:
                 active_subscriptions = get_user_subscriptions_by_status(user, 'active')
                 if active_subscriptions and active_subscriptions.get('data', []):
@@ -196,7 +223,11 @@ class StripePayment(APIView):
                 })
 
                 if not payment_intent['success']:
-                    response = {'success': False, 'message': payment_intent['message']}
+                    response = {
+                        'success': False, 
+                        'message': payment_intent['message'],
+                        'card_declined': payment_intent.get('card_declined', False)
+                    }
                     return Response(response, status.HTTP_400_BAD_REQUEST)
                 
                 start_date = timezone.now()
@@ -216,7 +247,11 @@ class StripePayment(APIView):
                 return Response(response, status.HTTP_200_OK)
 
         except Exception as e:
-            response = {'success': False, 'message': f'Unable to process the payment: {str(e)}'}
+            response = {
+                'success': False, 
+                'message': f'Unable to process the payment: {str(e)}',
+                'card_declined': 'card' in str(e).lower() and 'declined' in str(e).lower()
+            }
             return Response(response, status.HTTP_400_BAD_REQUEST)
 
     def get(self, request, *args, **kwargs):
@@ -278,7 +313,7 @@ class GetSubscriptionDetails(APIView):
             if subscription:
                 # Determine billing period
                 if subscription.plan.name == 'PRO':
-                    billing_period = 'Yearly'
+                    billing_period = 'Monthly'
                 elif subscription.plan.name == 'BASIC' or subscription.plan.name == 'ADVANCED':  
                     billing_period = 'Monthly'
                 else:
@@ -291,13 +326,15 @@ class GetSubscriptionDetails(APIView):
                     is_cancelling = stripe_sub.get('cancel_at_period_end', False)
                 
                 data = {
+                    'id': subscription.id,
                     'current_subscription': subscription.plan.name,
                     'is_cancel_subscription': is_cancelling,
                     'price': subscription.plan.price,
                     'billing_period': billing_period,
-                    'features': subscription.plan.features,
-                    'start_date': subscription.start_date,
-                    'end_date': subscription.end_date,
+                    'features': subscription.plan.description,
+                    'start_date': subscription.start_date.strftime("%d %B, %Y"),
+                    'end_date': subscription.end_date.strftime("%d %B, %Y"),
+                    'status': subscription.status,
                 }
             else:
                 data = {
@@ -312,7 +349,7 @@ class GetSubscriptionDetails(APIView):
 
             response = {
                 'success': True,
-                'data': data
+                'plan': data
             }
             return Response(response, status.HTTP_200_OK)
         except Exception as e:
