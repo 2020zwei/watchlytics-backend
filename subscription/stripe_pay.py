@@ -89,6 +89,52 @@ def create_subscription(customer_id, price_id):
         subscription_intent = stripe.Subscription.create(**subscription_params)
         
         return {'status': True, 'result': subscription_intent}
+    except stripe.error.CardError as e:
+        err = e.json_body.get('error', {})
+        return {
+            'status': False, 
+            'result': e,
+            'card_declined': True,
+            'decline_code': err.get('decline_code'),
+            'message': err.get('message', 'Your card was declined.')
+        }
+    except stripe.error.StripeError as e:
+        return {'status': False, 'result': e}
+
+
+def modify_subscription(stripe_subscription_id, new_price_id, payment_method_id=None):
+    try:
+        stripe_subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+        subscription_item_id = stripe_subscription['items']['data'][0]['id']
+        
+        modify_params = {
+            'cancel_at_period_end': False,
+            'proration_behavior': "always_invoice",
+            'items': [{
+                'id': subscription_item_id,
+                'price': new_price_id
+            }],
+            'metadata': {"price_id": new_price_id, "is_upgrade": True}
+        }
+        
+        if payment_method_id:
+            modify_params['default_payment_method'] = payment_method_id
+        
+        response = stripe.Subscription.modify(
+            stripe_subscription_id,
+            **modify_params
+        )
+        
+        return {'status': True, 'result': response}
+    except stripe.error.CardError as e:
+        err = e.json_body.get('error', {})
+        return {
+            'status': False, 
+            'result': e,
+            'card_declined': True,
+            'decline_code': err.get('decline_code'),
+            'message': err.get('message', 'Your card was declined.')
+        }
     except stripe.error.StripeError as e:
         return {'status': False, 'result': e}
 
@@ -128,6 +174,9 @@ def make_stripe_order_payment(data):
         else:
             intent = create_subscription(customer_id, data['price_id'])
             if intent.get('status') is False:
+                if intent.get('card_declined'):
+                    return {'success': False, 'message': intent.get('message'), 'card_declined': True}
+                
                 message = intent.get('result').user_message
                 cleaned_error_message = re.sub(r'\bsub_\w+', '', message)
                 return {'success': False, 'message': f'{cleaned_error_message}'}
@@ -146,8 +195,10 @@ def make_stripe_order_payment(data):
 
 
 def validate_stripe_fields(data):
-    return all([
-        data.get('price_id'),
-        data.get('plan_name'),
-    ])
-
+    required_fields = ['price_id', 'plan_name']
+    
+    if data.get('is_modification') == 'true':
+        if data.get('payment_method_token'):
+            required_fields.append('payment_method_token')
+            
+    return all([data.get(field) for field in required_fields])
