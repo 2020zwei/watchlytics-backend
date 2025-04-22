@@ -295,9 +295,9 @@ class GetSubscriptionDetails(APIView):
                     'is_cancel_subscription': is_cancelling,
                     'price': subscription.plan.price,
                     'billing_period': billing_period,
-                    'features': subscription.plan.features,
-                    'start_date': subscription.start_date,
-                    'end_date': subscription.end_date,
+                    'features': subscription.plan.description,
+                    'start_date': subscription.start_date.strftime("%d %B, %Y"),
+                    'end_date': subscription.end_date.strftime("%d %B, %Y"),
                 }
             else:
                 data = {
@@ -312,7 +312,7 @@ class GetSubscriptionDetails(APIView):
 
             response = {
                 'success': True,
-                'data': data
+                'plan': data
             }
             return Response(response, status.HTTP_200_OK)
         except Exception as e:
