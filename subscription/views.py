@@ -291,6 +291,7 @@ class GetSubscriptionDetails(APIView):
                     is_cancelling = stripe_sub.get('cancel_at_period_end', False)
                 
                 data = {
+                    'id': subscription.id,
                     'current_subscription': subscription.plan.name,
                     'is_cancel_subscription': is_cancelling,
                     'price': subscription.plan.price,
@@ -298,6 +299,7 @@ class GetSubscriptionDetails(APIView):
                     'features': subscription.plan.description,
                     'start_date': subscription.start_date.strftime("%d %B, %Y"),
                     'end_date': subscription.end_date.strftime("%d %B, %Y"),
+                    'status': subscription.status,
                 }
             else:
                 data = {
