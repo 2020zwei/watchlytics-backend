@@ -1,53 +1,129 @@
-from rest_framework import viewsets, permissions, generics, filters
-from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
-from .models import Brand, WatchModel, Watch
-from .serializers import BrandSerializer, WatchModelSerializer, WatchSerializer
-from django.db.models import Count, Sum, Avg
+from rest_framework.decorators import action
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from .models import Category, Product
+from .serializers import CategorySerializer, ProductSerializer, ProductCreateSerializer
+from rest_framework.permissions import AllowAny
 
-class BrandViewSet(viewsets.ModelViewSet):
-    queryset = Brand.objects.all()
-    serializer_class = BrandSerializer
-    permission_classes = (permissions.IsAuthenticated,)
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['name']
-    ordering_fields = ['name']
 
-class WatchModelViewSet(viewsets.ModelViewSet):
-    queryset = WatchModel.objects.all()
-    serializer_class = WatchModelSerializer
-    permission_classes = (permissions.IsAuthenticated,)
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['brand']
-    search_fields = ['name', 'reference_number', 'brand__name']
-    ordering_fields = ['name', 'brand__name']
+class CategoryViewSet(viewsets.ModelViewSet):
+    queryset = Category.objects.all()
+    serializer_class = CategorySerializer
+    permission_classes = [AllowAny]
 
-class WatchViewSet(viewsets.ModelViewSet):
-    serializer_class = WatchSerializer
-    permission_classes = (permissions.IsAuthenticated,)
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['status', 'condition', 'watch_model__brand']
-    search_fields = ['serial_number', 'watch_model__name', 'watch_model__brand__name']
-    ordering_fields = ['purchase_date', 'asking_price', 'purchase_price']
-    queryset = Watch.objects.all()
+class ProductViewSet(viewsets.ModelViewSet):
+    serializer_class = ProductSerializer
+    permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        # Filter watches by the current user
-        return Watch.objects.filter(owner=self.request.user)
+        user = self.request.user
+        return Product.objects.filter(owner=user)
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return ProductCreateSerializer
+        return ProductSerializer
     
     def perform_create(self, serializer):
-        # Set the owner to the current user
         serializer.save(owner=self.request.user)
-
-class InventoryStatsView(generics.GenericAPIView):
-    permission_classes = (permissions.IsAuthenticated,)
     
-    def get(self, request):
-        # Get user's inventory stats
-        watches = Watch.objects.filter(owner=request.user)
+    @action(detail=False, methods=['post'])
+    def create_product(self, request):
+        serializer = ProductCreateSerializer(data=request.data, files=request.FILES)
+        if serializer.is_valid():
+            product = serializer.save(owner=request.user)
+            response_serializer = ProductSerializer(product)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def unsold(self, request):
+        unsold_products = self.get_queryset().filter(date_sold__isnull=True)
+        serializer = self.get_serializer(unsold_products, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def sold(self, request):
+        sold_products = self.get_queryset().filter(date_sold__isnull=False)
+        serializer = self.get_serializer(sold_products, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['patch'])
+    def mark_as_sold(self, request, pk=None):
+        product = self.get_object()
+        sold_data = {
+            'date_sold': request.data.get('date_sold', timezone.now().date()),
+            'sold_price': request.data.get('sold_price'),
+            'sold_source': request.data.get('sold_source'),
+            'status': 'sold'
+        }
         
-        # Total inventory value
-        total_inventory_value = watches.filter(status='in_stock').aggregate(
-            total_purchase=Sum('purchase_price'),
-            total_asking=Sum('asking_price')
-        )
+        serializer = self.get_serializer(product, data=sold_data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+
+    @action(detail=True, methods=['put', 'patch'])
+    def update_product(self, request, pk=None):
+        try:
+            product = self.get_object()
+            
+            # Choose appropriate serializer based on update type
+            if request.method == 'PUT':
+                serializer = ProductSerializer(product, data=request.data)
+            else:
+                serializer = ProductSerializer(product, data=request.data, partial=True)
+            
+            if serializer.is_valid():
+                if 'buying_price' in request.data and float(request.data['buying_price']) <= 0:
+                    return Response(
+                        {"buying_price": "Buying price must be greater than 0"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                if request.data.get('status') == 'sold' and not request.data.get('sold_price'):
+                    return Response(
+                        {"sold_price": "Sold price is required when marking a product as sold"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                updated_product = serializer.save()
+                response_serializer = ProductSerializer(updated_product)
+                return Response(response_serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to update product: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['delete'])
+    def delete_product(self, request, pk=None):
+        try:
+            product = self.get_object()
+            
+            # if product.orders.exists():
+            #     return Response(
+            #         {"error": "Cannot delete product that is referenced by orders"},
+            #         status=status.HTTP_400_BAD_REQUEST
+            #     )
+            
+            # Standard deletion
+            product_name = product.product_name
+            product.delete()
+            
+            return Response(
+                {"message": f"Product '{product_name}' successfully deleted"},
+                status=status.HTTP_204_NO_CONTENT
+            )
+        
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to delete product: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

@@ -1,25 +1,49 @@
 from rest_framework import serializers
-from .models import Brand, WatchModel, Watch
+from .models import Category, Product
 
-class BrandSerializer(serializers.ModelSerializer):
+class CategorySerializer(serializers.ModelSerializer):
     class Meta:
-        model = Brand
-        fields = '__all__'
+        model = Category
+        fields = ['id', 'name', 'description']
 
-class WatchModelSerializer(serializers.ModelSerializer):
-    brand_name = serializers.ReadOnlyField(source='brand.name')
-    
-    class Meta:
-        model = WatchModel
-        fields = '__all__'
-
-class WatchSerializer(serializers.ModelSerializer):
-    brand_name = serializers.ReadOnlyField(source='watch_model.brand.name')
-    model_name = serializers.ReadOnlyField(source='watch_model.name')
+class ProductSerializer(serializers.ModelSerializer):
     days_in_inventory = serializers.ReadOnlyField()
-    stock_age_category = serializers.ReadOnlyField()
+    is_sold = serializers.ReadOnlyField()
+    calculated_profit = serializers.ReadOnlyField()
     
     class Meta:
-        model = Watch
-        fields = '__all__'
-        read_only_fields = ('created_at', 'updated_at')
+        model = Product
+        fields = [
+            'id', 'owner', 'product_name', 'product_id', 'category',
+            'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
+            'msrp', 'sold_price', 'whole_price', 'website_price', 'profit_margin',
+            'quantity', 'unit', 'date_purchased', 'date_sold', 'hold_time',
+            'source_of_sale', 'purchased_from', 'sold_source', 'listed_on',
+            'image', 'created_at', 'updated_at', 'days_in_inventory', 'is_sold',
+            'calculated_profit'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'owner']
+
+class ProductCreateSerializer(serializers.ModelSerializer):
+    image = serializers.ImageField(required=False)
+    
+    class Meta:
+        model = Product
+        fields = [
+            'product_name', 'product_id', 'category',
+            'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
+            'msrp', 'whole_price', 'website_price', 'profit_margin',
+            'quantity', 'unit', 'date_purchased', 'hold_time',
+            'purchased_from', 'listed_on', 'image'
+        ]
+    
+    def validate_category(self, value):
+        if not Category.objects.filter(id=value.id).exists():
+            raise serializers.ValidationError("Category does not exist")
+        return value
+    
+    def validate(self, data):
+        if 'buying_price' in data and data['buying_price'] <= 0:
+            raise serializers.ValidationError({"buying_price": "Buying price must be greater than 0"})
+        
+        return data
