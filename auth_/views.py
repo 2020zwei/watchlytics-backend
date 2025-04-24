@@ -38,6 +38,20 @@ class SignUpView(CreateAPIView):
     serializer_class = UserSerializer
     permission_classes = [AllowAny]
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        
+        refresh = RefreshToken.for_user(user)
+        access_token = refresh.access_token
+        return Response(
+            {'access_token': str(access_token), 'user': serializer.data},
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
+
     def perform_create(self, serializer):
         user = serializer.save()
         verification_url = self.generate_verification_url(user)
@@ -51,12 +65,14 @@ class SignUpView(CreateAPIView):
         )
 
         send_mail(
-            subject= email_subject,
-            message= email_message,
+            subject=email_subject,
+            message=email_message,
             from_email="info@once-more.com",
             recipient_list=[user.email],
             fail_silently=False
         )
+        
+        return user  # Return the user object
 
     def generate_verification_url(self, user):
         uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
