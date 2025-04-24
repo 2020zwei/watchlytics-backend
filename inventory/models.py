@@ -14,7 +14,7 @@ class Category(models.Model):
         return self.name
 
 class Product(models.Model):
-    STATUS_CHOICES = (
+    AVAILABILTY_CHOICES = (
         ('in_stock', 'In Stock'),
         ('sold', 'Sold'),
         ('reserved', 'Reserved'),
@@ -24,7 +24,7 @@ class Product(models.Model):
     product_name = models.CharField(max_length=200)
     product_id = models.CharField(max_length=50, unique=True)
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='products')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_stock')
+    availability = models.CharField(max_length=20, choices=AVAILABILTY_CHOICES, default='in_stock')
     
     # Price information
     buying_price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -75,7 +75,7 @@ class Product(models.Model):
         return None 
     @property
     def days_in_inventory(self):
-        if self.status == 'in_stock':
+        if self.availability == 'in_stock':
             return (timezone.now().date() - self.purchase_date).days
         elif not self.date_sold:
             return (timezone.now().date() - self.date_purchased).days

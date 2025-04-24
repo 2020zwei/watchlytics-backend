@@ -10,7 +10,6 @@ class ProductSerializer(serializers.ModelSerializer):
     days_in_inventory = serializers.ReadOnlyField()
     is_sold = serializers.ReadOnlyField()
     calculated_profit = serializers.ReadOnlyField()
-    category = CategorySerializer(read_only=True)
     category_name = serializers.SerializerMethodField()
     
     class Meta:
@@ -21,7 +20,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'msrp', 'sold_price', 'whole_price', 'website_price', 'profit_margin',
             'quantity', 'unit', 'date_purchased', 'date_sold', 'hold_time',
             'source_of_sale', 'purchased_from', 'sold_source', 'listed_on',
-            'image', 'days_in_inventory', 'is_sold',
+            'image', 'days_in_inventory', 'is_sold', 'availability',
             'calculated_profit',
         ]
         read_only_fields = ['created_at', 'updated_at', 'owner']
@@ -38,7 +37,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
             'msrp', 'whole_price', 'website_price', 'profit_margin',
             'quantity', 'unit', 'date_purchased', 'hold_time',
-            'purchased_from', 'listed_on', 'image'
+            'purchased_from', 'listed_on', 'image', 'availability',
         ]
     
     def validate_category(self, value):

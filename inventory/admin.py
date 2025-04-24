@@ -34,14 +34,14 @@ class ProductAdmin(admin.ModelAdmin):
                    'sold_price', 'profit_display', 'quantity', 'date_purchased', 
                    'date_sold', 'is_sold_display', 'days_in_inventory_display')
     
-    list_filter = ('category', 'status', ProductStockAgeListFilter, 'owner')
+    list_filter = ('category', 'availability', ProductStockAgeListFilter, 'owner')
     search_fields = ('product_name', 'product_id', 'owner__username', 'purchased_from', 'sold_source')
     readonly_fields = ('created_at', 'updated_at', 'calculated_profit', 'days_in_inventory')
     date_hierarchy = 'date_purchased'
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('owner', 'product_name', 'product_id', 'category', 'status', 'quantity', 'unit')
+            'fields': ('owner', 'product_name', 'product_id', 'category', 'availability', 'quantity', 'unit')
         }),
         ('Financial Information', {
             'fields': ('buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission', 
