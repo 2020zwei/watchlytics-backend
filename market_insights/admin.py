@@ -3,12 +3,12 @@ from .models import MarketData
 
 @admin.register(MarketData)
 class MarketDataAdmin(admin.ModelAdmin):
-    list_display = ('watch_model', 'source', 'price', 'listing_date', 'scraped_at')
-    list_filter = ('source', 'listing_date', 'watch_model__brand')
-    search_fields = ('watch_model__name', 'watch_model__brand__name')
+    list_display = ('product', 'source', 'price', 'listing_date', 'scraped_at')
+    list_filter = ('source', 'listing_date', 'product')
+    # search_fields = ('product_name', 'product_id')
     fieldsets = (
         ('Watch Information', {
-            'fields': ('watch_model',)
+            'fields': ('product',)
         }),
         ('Market Data', {
             'fields': ('source', 'price', 'condition', 'listing_date', 'listing_url')

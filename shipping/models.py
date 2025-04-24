@@ -1,5 +1,5 @@
 from django.db import models
-from transactions.models import Transaction
+from transactions.models import TransactionHistory
 
 class Shipment(models.Model):
     """Shipping information for transactions"""
@@ -11,7 +11,7 @@ class Shipment(models.Model):
         ('returned', 'Returned'),
     )
     
-    transaction = models.OneToOneField(Transaction, on_delete=models.CASCADE, related_name='shipment')
+    transaction_history = models.OneToOneField(TransactionHistory, on_delete=models.CASCADE, related_name='shipment')
     tracking_number = models.CharField(max_length=100, blank=True, null=True)
     carrier = models.CharField(max_length=100)
     shipping_method = models.CharField(max_length=100)
@@ -27,4 +27,4 @@ class Shipment(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"Shipment for {self.transaction.watch} - {self.tracking_number}"
+        return f"Shipment for {self.transaction_history.product} - {self.tracking_number}"

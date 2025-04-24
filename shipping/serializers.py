@@ -12,7 +12,7 @@ class ShipmentSerializer(serializers.ModelSerializer):
     def get_transaction_details(self, obj):
         return {
             'id': obj.transaction.id,
-            'watch': str(obj.transaction.watch)
+            'watch': str(obj.transaction.product)
         }
 
 class ShippingCalculatorSerializer(serializers.Serializer):

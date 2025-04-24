@@ -1,5 +1,5 @@
 from django.db import models
-from inventory.models import WatchModel
+from inventory.models import Product
 
 class MarketData(models.Model):
     """Market data scraped from various sources"""
@@ -10,7 +10,7 @@ class MarketData(models.Model):
         ('grailzee', 'Grailzee'),
     )
     
-    watch_model = models.ForeignKey(WatchModel, on_delete=models.CASCADE, related_name='market_data')
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='market_data')
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     listing_url = models.URLField(blank=True, null=True)
@@ -20,4 +20,4 @@ class MarketData(models.Model):
     scraped_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
-        return f"{self.watch_model} - {self.source} - {self.price}"
+        return f"{self.product} - {self.source} - {self.price}"

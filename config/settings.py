@@ -133,7 +133,7 @@ else:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': 'watchlytics_database',
+            'NAME': 'watchlytics_db',
             'USER': 'postgres',
             'PASSWORD': 'postgres',
             'HOST': 'localhost',
