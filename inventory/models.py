@@ -57,11 +57,14 @@ class Product(models.Model):
     listed_on = models.CharField(max_length=200, blank=True, null=True)
     
     # Media
-    image = models.ImageField(upload_to='images/', blank=True, null=True)
+    image = models.ImageField(upload_to='images/', blank=False, null=False)
     
     # System fields
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ('owner', 'product_id')
     
     def __str__(self):
         return f"{self.product_name} ({self.product_id})"

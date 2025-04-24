@@ -10,22 +10,26 @@ class ProductSerializer(serializers.ModelSerializer):
     days_in_inventory = serializers.ReadOnlyField()
     is_sold = serializers.ReadOnlyField()
     calculated_profit = serializers.ReadOnlyField()
+    category = CategorySerializer(read_only=True)
+    category_name = serializers.SerializerMethodField()
     
     class Meta:
         model = Product
         fields = [
-            'id', 'owner', 'product_name', 'product_id', 'category',
+            'id', 'owner', 'product_name', 'product_id', 'category_name', 'category',
             'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
             'msrp', 'sold_price', 'whole_price', 'website_price', 'profit_margin',
             'quantity', 'unit', 'date_purchased', 'date_sold', 'hold_time',
             'source_of_sale', 'purchased_from', 'sold_source', 'listed_on',
-            'image', 'created_at', 'updated_at', 'days_in_inventory', 'is_sold',
-            'calculated_profit'
+            'image', 'days_in_inventory', 'is_sold',
+            'calculated_profit',
         ]
         read_only_fields = ['created_at', 'updated_at', 'owner']
 
+    def get_category_name(self, obj):
+        return obj.category.name if obj.category else None
 class ProductCreateSerializer(serializers.ModelSerializer):
-    image = serializers.ImageField(required=False)
+    image = serializers.ImageField(required=True)
     
     class Meta:
         model = Product
