@@ -120,7 +120,8 @@ class SignInView(APIView):
                 'access_token': str(access_token),
                 'refresh_token': str(refresh),
                 'user_id': user.id,
-                'email': user.email
+                'email': user.email,
+                'is_subscribed': hasattr(user, 'subscription') and user.subscription is not None
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
