@@ -12,6 +12,7 @@ from transactions.models import TransactionHistory
 from datetime import timedelta
 from rest_framework.views import APIView
 from django.db.models import Sum, Count, Q, F
+from .pagination import CustomPagination
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -21,6 +22,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
 class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CustomPagination
     
     def get_queryset(self):
         user = self.request.user
@@ -191,12 +193,12 @@ class DashboardStatsView(APIView):
         ).aggregate(total=Sum('product__buying_price'))['total'] or 0
         
         ordered_count = Product.objects.filter(
-            status='reserved'
+            availability='reserved'
         ).count()
         
         not_in_stock = Product.objects.filter(
             quantity=0,
-            status='in_stock'
+            availability='in_stock'
         ).count()
         
         return Response({
