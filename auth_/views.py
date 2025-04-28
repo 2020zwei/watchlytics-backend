@@ -147,6 +147,7 @@ class ProfileView(APIView):
                 {
                     'message': "Profile retrieved successfully",
                     'data': serializers.data,
+                    'is_subscribed': hasattr(profile, 'subscription') and profile.subscription is not None,
                 },
                 status=status.HTTP_200_OK
             )
