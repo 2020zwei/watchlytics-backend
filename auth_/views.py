@@ -128,7 +128,7 @@ class SignInView(APIView):
 class ProfileView(APIView):
     permission_classes=[IsAuthenticated]
     serializer_class=UserSerializer
-    throttle_classes = [AnonRateThrottle, UserRateThrottle]
+    # throttle_classes = [AnonRateThrottle, UserRateThrottle]
 
     def get(self, request, *args, **kwargs):
         try:
