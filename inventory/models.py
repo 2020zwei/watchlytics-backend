@@ -50,9 +50,8 @@ class Product(models.Model):
     unit = models.CharField(max_length=50, blank=True, null=True)
     
     # Dates
-    date_purchased = models.DateField()
-    purchase_date = models.DateField(default=timezone.now)
-    date_sold = models.DateField(blank=True, null=True)
+    date_purchased = models.DateTimeField()
+    date_sold = models.DateTimeField(blank=True, null=True)
     hold_time = models.IntegerField(blank=True, null=True)
     
     # Source information

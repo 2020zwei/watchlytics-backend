@@ -28,12 +28,29 @@ class ProductSerializer(serializers.ModelSerializer):
     def get_category_name(self, obj):
         return obj.category.name if obj.category else None
 class ProductCreateSerializer(serializers.ModelSerializer):
-    date_purchased = serializers.DateField(
-        input_formats=['%Y-%m-%d', '%m/%d/%Y', '%d-%m-%Y'],
-        required=True
+    date_purchased = serializers.DateTimeField(
+        input_formats=[
+            '%Y-%m-%dT%H:%M:%S.%fZ',  
+            '%Y-%m-%dT%H:%M:%SZ',     
+            '%Y-%m-%d %H:%M:%S',     
+            '%m/%d/%Y %H:%M:%S',
+            '%d-%m-%Y %H:%M:%S',
+            '%Y-%m-%d',         
+        ],
     )
-    date_sold = serializers.DateField(
-        input_formats=['%Y-%m-%d', '%m/%d/%Y', '%d-%m-%Y'], required=False, allow_null=True
+
+    date_sold = serializers.DateTimeField(
+        input_formats=[
+            '%Y-%m-%dT%H:%M:%S.%fZ',
+            '%Y-%m-%dT%H:%M:%SZ',
+            '%Y-%m-%d %H:%M:%S',
+            '%m/%d/%Y %H:%M:%S',
+            '%d/%m/%Y %H:%M:%S',
+            '%d-%m-%Y %H:%M:%S',
+            '%Y-%m-%d',
+        ],
+        required=False,
+        allow_null=True
     )
     class Meta:
         model = Product

@@ -48,7 +48,7 @@ class ProductAdmin(admin.ModelAdmin):
                       'msrp', 'sold_price', 'whole_price', 'website_price', 'profit_margin', 'calculated_profit')
         }),
         ('Dates', {
-            'fields': ('date_purchased', 'purchase_date', 'date_sold', 'hold_time', 'days_in_inventory')
+            'fields': ('date_purchased', 'date_sold', 'hold_time', 'days_in_inventory')
         }),
         ('Source Information', {
             'fields': ('purchased_from', 'source_of_sale', 'sold_source', 'listed_on')

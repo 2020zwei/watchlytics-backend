@@ -325,7 +325,7 @@ class ProductCSVUploadAPIView(APIView):
                         defaults={'name': category_name}
                     )
                     
-                    purchase_date = self.to_date(normalized_row.get('Purchase Date'))
+                    date_purchased = self.to_date(normalized_row.get('Purchase Date'))
                     sold_date = self.to_date(normalized_row.get('Sold Date'))
                     
                     if not product_id:
@@ -356,7 +356,7 @@ class ProductCSVUploadAPIView(APIView):
                         'repair_cost': repair_cost,
                         'sold_price': sell_price,
                         'quantity': normalized_row.get('Quantity') or 1,
-                        'date_purchased': purchase_date,
+                        'date_purchased': date_purchased,
                         'date_sold': sold_date,
                         'source_of_sale': normalized_row.get('Sold To') or '',
                         'purchased_from': normalized_row.get('Bought From') or '',
