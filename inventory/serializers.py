@@ -50,3 +50,6 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"buying_price": "Buying price must be greater than 0"})
         
         return data
+    
+class ProductCSVUploadSerializer(serializers.Serializer):
+    csv_file = serializers.FileField()

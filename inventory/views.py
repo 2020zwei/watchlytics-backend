@@ -6,13 +6,22 @@ from django.utils import timezone
 from .models import Category, Product
 from .serializers import CategorySerializer, ProductSerializer, ProductCreateSerializer
 from rest_framework.permissions import AllowAny
-
+from io import TextIOWrapper
 from inventory.models import Product, Category
 from transactions.models import TransactionHistory
 from datetime import timedelta
 from rest_framework.views import APIView
 from django.db.models import Sum, Count, Q, F
 from .pagination import CustomPagination
+import csv
+import openpyxl
+import io
+from .serializers import ProductCSVUploadSerializer
+from .models import Product, User, Category
+from django.utils.dateparse import parse_date
+from decimal import Decimal, InvalidOperation
+from datetime import datetime
+from django.db import transaction
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -221,3 +230,182 @@ class DashboardStatsView(APIView):
                 "not_in_stock": not_in_stock
             }
         })
+    
+
+class ProductCSVUploadAPIView(APIView):
+
+    @staticmethod
+    def parse_decimal(value, default=0):
+        if value is None:
+            return Decimal(default)
+        try:
+            if isinstance(value, str):
+                value = value.strip().replace(',', '')
+            return Decimal(str(value))
+        except (InvalidOperation, ValueError, TypeError):
+            return Decimal(default)
+
+    @staticmethod
+    def to_date(value):
+        if not value:
+            return None
+            
+        if isinstance(value, datetime):
+            return value.date()
+            
+        if not isinstance(value, str):
+            return None
+            
+        value = value.strip()
+        formats = ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%d-%m-%Y']
+        
+        for date_format in formats:
+            try:
+                return datetime.strptime(value, date_format).date()
+            except ValueError:
+                continue
+                
+        return None
+            
+    def post(self, request, *args, **kwargs):
+        uploaded_file = request.FILES.get('excel_file')
+        if not uploaded_file:
+            return Response({'error': 'No file provided.'}, status=400)
+
+        filename = uploaded_file.name.lower()
+
+        try:
+            # Parse file based on extension
+            if filename.endswith('.csv'):
+                reader = csv.DictReader(TextIOWrapper(uploaded_file.file, encoding='utf-8'))
+                rows = list(reader)
+            elif filename.endswith(('.xlsx', '.xls')):
+                wb = openpyxl.load_workbook(uploaded_file)
+                sheet = wb.active
+                headers = [cell.value for cell in sheet[1] if cell.value]
+                rows = [
+                    {headers[i]: cell.value for i, cell in enumerate(row) if i < len(headers)}
+                    for row in sheet.iter_rows(min_row=2)
+                ]
+            else:
+                return Response({'error': 'Unsupported file format. Please upload CSV or Excel file.'}, status=400)
+        except Exception as e:
+            return Response({'error': f'Error processing file: {str(e)}'}, status=400)
+
+        created = 0
+        updated = 0
+        errors = []
+        user = self.request.user
+        
+        with transaction.atomic():
+            for index, row in enumerate(rows, start=2):
+                try:
+                    normalized_row = self._normalize_row(row)
+                    
+                    product_id = normalized_row.get('Reference')
+                    serial_number = normalized_row.get('Serial Number')
+                    model_name = normalized_row.get('Model Name')
+                    
+                    if not (product_id or serial_number or model_name):
+                        continue
+                        
+                    buy_price = self.parse_decimal(normalized_row.get('Buy Price'))
+                    total_cost = self.parse_decimal(normalized_row.get('Total Cost'))
+                    sell_price = self.parse_decimal(normalized_row.get('Sell Price'))
+                    shipping_price = self.parse_decimal(normalized_row.get('Shipping'))
+                    repair_cost = self.parse_decimal(normalized_row.get('Expense'))
+                    
+                    profit = sell_price - buy_price
+                    profit_margin = int((profit / buy_price) * 100) if buy_price else 0
+                    
+                    brand_name = normalized_row.get('Brand') or 'Unnamed Product'
+                    category_name = brand_name.strip()
+                    category, _ = Category.objects.get_or_create(
+                        name__iexact=category_name,
+                        defaults={'name': category_name}
+                    )
+                    
+                    purchase_date = self.to_date(normalized_row.get('Purchase Date'))
+                    sold_date = self.to_date(normalized_row.get('Sold Date'))
+                    
+                    if not product_id:
+                        product_id = f'custom-id-{index}'
+
+                    existing_product = None
+                    if product_id or serial_number:
+                        q_filter = Q()
+                        if product_id:
+                            q_filter |= Q(product_id=product_id)
+                        if serial_number:
+                            q_filter |= Q(serial_number=serial_number)
+                        
+                        existing_products = Product.objects.filter(q_filter, owner=user)
+                        if existing_products.exists():
+                            existing_product = existing_products.first()
+
+                    product_data = {
+                        'owner': user,
+                        'product_name': model_name or brand_name,
+                        'product_id': product_id,
+                        'serial_number': serial_number,
+                        'category': category,
+                        'profit_margin': profit_margin,
+                        'availability': self.map_availability(normalized_row.get('Deal Status')),
+                        'buying_price': buy_price,
+                        'shipping_price': shipping_price,
+                        'repair_cost': repair_cost,
+                        'sold_price': sell_price,
+                        'quantity': normalized_row.get('Quantity') or 1,
+                        'date_purchased': purchase_date,
+                        'date_sold': sold_date,
+                        'source_of_sale': normalized_row.get('Sold To') or '',
+                        'purchased_from': normalized_row.get('Bought From') or '',
+                        'sold_source': normalized_row.get('Payment Sent account') or '',
+                        'listed_on': normalized_row.get('Delivery Content') or '',
+                        'whole_price': total_cost,
+                    }
+
+                    if existing_product:
+                        for key, value in product_data.items():
+                            setattr(existing_product, key, value)
+                        existing_product.save()
+                        updated += 1
+                    else:
+                        Product.objects.create(**product_data)
+                        created += 1
+                        
+                except Exception as e:
+                    errors.append({'row': index, 'error': str(e)})
+
+        return Response({
+            'created': created,
+            'updated': updated,
+            'errors': errors,
+            'total_processed': created + updated,
+            'total_rows': len(rows),
+        }, status=201)
+
+    def _normalize_row(self, row):
+        return {
+            key.strip() if isinstance(key, str) else key: 
+            (value.strip() if isinstance(value, str) else value)
+            for key, value in row.items()
+            if key is not None
+        }
+
+    def map_availability(self, deal_status):
+        if not deal_status:
+            return 'in_stock'
+            
+        if isinstance(deal_status, str):
+            deal_status = deal_status.strip().lower()
+            
+        mapping = {
+            'sold': 'sold',
+            'in stock': 'in_stock',
+            'instock': 'in_stock',
+            'reserved': 'reserved',
+            'in repair': 'in_repair',
+            'repair': 'in_repair'
+        }
+        return mapping.get(deal_status.lower(), 'in_stock')

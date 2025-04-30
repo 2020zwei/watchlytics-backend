@@ -77,11 +77,12 @@ class ProductAdmin(admin.ModelAdmin):
     is_sold_display.short_description = "Sold"
     
     def profit_display(self, obj):
-        profit = obj.calculated_profit
-        if profit is None:
-            return "-"
-        color = 'green' if profit > 0 else 'red'
-        return format_html('<span style="color: {};">${:.2f}</span>', color, profit)
+        try:
+            profit = float(obj.calculated_profit)
+        except (TypeError, ValueError):
+            profit = 0.0
+        color = "green" if profit >= 0 else "red"
+        return format_html('<span style="color: {};">${}</span>', color, '{:.2f}'.format(profit))
     profit_display.short_description = "Profit"
     
     def days_in_inventory_display(self, obj):
