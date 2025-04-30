@@ -18,6 +18,12 @@ class Product(models.Model):
         ('in_stock', 'In Stock'),
         ('sold', 'Sold'),
         ('reserved', 'Reserved'),
+        ('in_repair', 'In Repair'), 
+    )
+
+    CONDITION_CHOICES = (
+        ('new', 'New'),
+        ('used', 'Used'),
     )
     
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='products')
@@ -37,6 +43,7 @@ class Product(models.Model):
     whole_price = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     website_price = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     profit_margin = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    profit = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     
     # Quantity and unit
     quantity = models.IntegerField(default=1)
@@ -50,6 +57,8 @@ class Product(models.Model):
     
     # Source information
     source_of_sale = models.CharField(max_length=100, blank=True, null=True)
+    delivery_content = models.CharField(max_length=100, blank=True, null=True)
+    condition = models.CharField(max_length=50, blank=True, null=True, choices=CONDITION_CHOICES, default='new')
     purchased_from = models.CharField(max_length=100, blank=True, null=True)
     sold_source = models.CharField(max_length=100, blank=True, null=True)
     
@@ -57,14 +66,14 @@ class Product(models.Model):
     listed_on = models.CharField(max_length=200, blank=True, null=True)
     
     # Media
-    image = models.ImageField(upload_to='images/', blank=False, null=False)
+    image = models.ImageField(upload_to='images/', blank=True, null=True)
     
     # System fields
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+    serial_number = models.CharField(max_length=50, unique=True, blank=True, null=True)
     class Meta:
-        unique_together = ('owner', 'product_id')
+        unique_together = ('owner', 'product_id', 'serial_number')
     
     def __str__(self):
         return f"{self.product_name} ({self.product_id})"
