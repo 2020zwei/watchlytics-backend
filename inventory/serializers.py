@@ -42,7 +42,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
             'msrp', 'whole_price', 'website_price', 'profit_margin',
             'quantity', 'unit', 'date_purchased', 'hold_time',
-            'purchased_from', 'listed_on', 'image', 'availability',
+            'purchased_from', 'listed_on', 'image', 'availability', 'date_sold',
         ]
     
     def validate_category(self, value):
