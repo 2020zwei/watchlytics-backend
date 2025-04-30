@@ -28,8 +28,13 @@ class ProductSerializer(serializers.ModelSerializer):
     def get_category_name(self, obj):
         return obj.category.name if obj.category else None
 class ProductCreateSerializer(serializers.ModelSerializer):
-    image = serializers.ImageField(required=True)
-    
+    date_purchased = serializers.DateField(
+        input_formats=['%Y-%m-%d', '%m/%d/%Y', '%d-%m-%Y'],
+        required=True
+    )
+    date_sold = serializers.DateField(
+        input_formats=['%Y-%m-%d', '%m/%d/%Y', '%d-%m-%Y'], required=False, allow_null=True
+    )
     class Meta:
         model = Product
         fields = [
