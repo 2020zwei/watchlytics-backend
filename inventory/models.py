@@ -28,7 +28,7 @@ class Product(models.Model):
     
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='products')
     product_name = models.CharField(max_length=200)
-    product_id = models.CharField(max_length=50, unique=True)
+    product_id = models.CharField(max_length=50)
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='products')
     availability = models.CharField(max_length=20, choices=AVAILABILTY_CHOICES, default='in_stock')
     
@@ -70,9 +70,9 @@ class Product(models.Model):
     # System fields
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    serial_number = models.CharField(max_length=50, unique=True, blank=True, null=True)
+    serial_number = models.CharField(max_length=50, blank=True, null=True)
     class Meta:
-        unique_together = ('owner', 'product_id', 'serial_number')
+        unique_together = (('owner', 'product_id'), ('owner', 'serial_number'))
     
     def __str__(self):
         return f"{self.product_name} ({self.product_id})"
@@ -84,9 +84,9 @@ class Product(models.Model):
     @property
     def days_in_inventory(self):
         if self.availability == 'in_stock':
-            return (timezone.now().date() - self.purchase_date).days
+            return (timezone.now().date() - self.date_purchased.date()).days
         elif not self.date_sold:
-            return (timezone.now().date() - self.date_purchased).days
+            return (timezone.now().date() - self.date_purchased.date()).days
         return (self.date_sold - self.date_purchased).days
     
     @property

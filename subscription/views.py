@@ -154,6 +154,54 @@ class StripePayment(APIView):
             response = {'success': False, 'message': "We did not find any active subscription."}
             return Response(response, status.HTTP_400_BAD_REQUEST)
 
+    def create_free_subscription(self, user):
+        try:
+            existing_subscription = Subscription.objects.filter(
+                user=user,
+                is_active=True
+            ).first()
+            
+            if existing_subscription:
+                if existing_subscription.plan.name == 'FREE':
+                    return {
+                        'success': False,
+                        'message': "You already have an active FREE plan.",
+                        'is_duplicate': True
+                    }, status.HTTP_400_BAD_REQUEST
+                else:
+                    self.cancel_subscription(user)
+            
+            free_plan = Plan.objects.filter(name='FREE').first()
+            if not free_plan:
+                return {
+                    'success': False,
+                    'message': "FREE plan not found in the system."
+                }, status.HTTP_400_BAD_REQUEST
+            
+            start_date = timezone.now()
+            end_date = start_date + timedelta(days=30)
+            
+            Subscription.objects.create(
+                user=user,
+                plan=free_plan,
+                stripe_subscription_id=None,
+                status='active',
+                start_date=start_date,
+                end_date=end_date,
+                is_active=True
+            )
+            
+            return {
+                'success': True,
+                'message': "FREE subscription created successfully."
+            }, status.HTTP_200_OK
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f"Unable to create FREE subscription: {str(e)}"
+            }, status.HTTP_400_BAD_REQUEST
+
     def post(self, request, *args, **kwargs):
 
         try:
@@ -162,12 +210,20 @@ class StripePayment(APIView):
             if request.data.get('is_cancelled_subscription', "false").lower() == "true":
                 return self.cancel_subscription_flow(user=user)
 
+            plan_name = request.data.get('plan_name')
+            price_id = request.data.get('price_id')
+
+            if not plan_name:
+                response = {'success': False, 'message': "Plan name is required"}
+                return Response(response, status.HTTP_400_BAD_REQUEST)
+
+            if plan_name.upper() == 'FREE':
+                response_data, status_code = self.create_free_subscription(user)
+                return Response(response_data, status_code)
+                
             if not validate_stripe_fields(request.data):
                 response = {'success': False, 'message': "Some Payment Fields are missing"}
                 return Response(response, status.HTTP_400_BAD_REQUEST)
-
-            plan_name = request.data['plan_name']
-            price_id = request.data['price_id']
 
             plan = Plan.objects.filter(name__iexact=plan_name).first()
             if not plan:

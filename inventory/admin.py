@@ -1,7 +1,9 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from django.db.models import Sum, Avg, Count
+from django.db.models import Sum, Avg, Count, F, ExpressionWrapper, DurationField, fields
 from django.urls import reverse
+from django.utils import timezone
+from datetime import timedelta
 from .models import Product, Category
 
 @admin.register(Category)
@@ -26,7 +28,31 @@ class ProductStockAgeListFilter(admin.SimpleListFilter):
         )
     
     def queryset(self, request, queryset):
-        return queryset  # This would need custom implementation based on your stock_age_category property
+        now = timezone.now().date()
+        
+        if self.value() == 'less_than_30':
+            return queryset.filter(
+                availability=True,  # Not sold
+                date_purchased__gte=now - timedelta(days=30)
+            )
+        elif self.value() == '30_to_60':
+            return queryset.filter(
+                availability=True,  # Not sold
+                date_purchased__lt=now - timedelta(days=30),
+                date_purchased__gte=now - timedelta(days=60)
+            )
+        elif self.value() == '60_to_90':
+            return queryset.filter(
+                availability=True,  # Not sold
+                date_purchased__lt=now - timedelta(days=60),
+                date_purchased__gte=now - timedelta(days=90)
+            )
+        elif self.value() == 'more_than_90':
+            return queryset.filter(
+                availability=True,  # Not sold
+                date_purchased__lt=now - timedelta(days=90)
+            )
+        return queryset
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
@@ -35,7 +61,7 @@ class ProductAdmin(admin.ModelAdmin):
                    'date_sold', 'is_sold_display', 'days_in_inventory_display')
     
     list_filter = ('category', 'availability', ProductStockAgeListFilter, 'owner')
-    search_fields = ('product_name', 'product_id', 'owner__username', 'purchased_from', 'sold_source')
+    search_fields = ('product_name', 'product_id', 'owner__first_name', 'purchased_from', 'sold_source')
     readonly_fields = ('created_at', 'updated_at', 'calculated_profit', 'days_in_inventory')
     date_hierarchy = 'date_purchased'
     
@@ -64,17 +90,18 @@ class ProductAdmin(admin.ModelAdmin):
     
     def owner_display(self, obj):
         if obj.owner:
-            return format_html('<a href="{}">{}</a>', 
-                              reverse('admin:auth__user_change', args=(obj.owner.pk,)),
-                              obj.owner.username)
+            # Display owner first_name without link to avoid URL resolution issues
+            return obj.owner.first_name
         return "-"
     owner_display.short_description = "Owner"
+    owner_display.admin_order_field = 'owner__first_name'  # Enable sorting by owner
     
     def is_sold_display(self, obj):
         return format_html('<span style="color: {};">{}</span>', 
                           'green' if obj.is_sold else 'red', 
                           'Yes' if obj.is_sold else 'No')
     is_sold_display.short_description = "Sold"
+    is_sold_display.admin_order_field = 'availability'  # Sort by availability
     
     def profit_display(self, obj):
         try:
@@ -84,6 +111,7 @@ class ProductAdmin(admin.ModelAdmin):
         color = "green" if profit >= 0 else "red"
         return format_html('<span style="color: {};">${}</span>', color, '{:.2f}'.format(profit))
     profit_display.short_description = "Profit"
+    profit_display.admin_order_field = 'calculated_profit'  # Enable sorting by profit
     
     def days_in_inventory_display(self, obj):
         days = obj.days_in_inventory
@@ -102,7 +130,18 @@ class ProductAdmin(admin.ModelAdmin):
             
         return format_html('<span style="color: {};">{} days</span>', color, days)
     days_in_inventory_display.short_description = "Days in Inventory"
+    days_in_inventory_display.admin_order_field = 'days_in_inventory'  # Enable sorting
     
     def get_queryset(self, request):
         queryset = super().get_queryset(request)
+        # Use select_related to optimize queries for related fields
         return queryset.select_related('owner', 'category')
+    
+    def get_search_results(self, request, queryset, search_term):
+        """Enhanced search functionality to better handle related fields"""
+        queryset, use_distinct = super().get_search_results(request, queryset, search_term)
+        
+        # Always use distinct to avoid duplicate results
+        use_distinct = True
+        
+        return queryset, use_distinct

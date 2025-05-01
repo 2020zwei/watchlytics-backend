@@ -20,8 +20,8 @@ class ProductSerializer(serializers.ModelSerializer):
             'msrp', 'sold_price', 'whole_price', 'website_price', 'profit_margin',
             'quantity', 'unit', 'date_purchased', 'date_sold', 'hold_time',
             'source_of_sale', 'purchased_from', 'sold_source', 'listed_on',
-            'image', 'days_in_inventory', 'is_sold', 'availability',
-            'calculated_profit',
+            'image', 'days_in_inventory', 'is_sold', 'availability', 'condition',
+            'calculated_profit', 'serial_number'
         ]
         read_only_fields = ['created_at', 'updated_at', 'owner']
 
@@ -59,7 +59,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
             'msrp', 'whole_price', 'website_price', 'profit_margin',
             'quantity', 'unit', 'date_purchased', 'hold_time',
-            'purchased_from', 'listed_on', 'image', 'availability', 'date_sold',
+            'purchased_from', 'listed_on', 'image', 'availability', 'date_sold', 'serial_number',
         ]
     
     def validate_category(self, value):

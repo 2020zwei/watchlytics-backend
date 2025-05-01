@@ -37,15 +37,18 @@ class ProductViewSet(viewsets.ModelViewSet):
         user = self.request.user
         queryset = Product.objects.filter(owner=user)
         
-        brand = self.request.query_params.get('brand')
+        brands = self.request.query_params.getlist('brand')
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
         condition = self.request.query_params.get('condition')
         buyer = self.request.query_params.get('buyer')
         seller = self.request.query_params.get('seller')
         
-        if brand:
-            queryset = queryset.filter(product_name__icontains=brand)
+        if brands:
+            brand_filter = Q()
+            for brand in brands:
+                brand_filter |= Q(product_name__icontains=brand)
+            queryset = queryset.filter(brand_filter)
         
         if start_date:
             queryset = queryset.filter(date_purchased__gte=start_date)
@@ -54,7 +57,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(date_purchased__lte=end_date)
         
         if condition:
-            queryset = queryset.filter(status=condition)
+            queryset = queryset.filter(condition=condition)
         
         if buyer:
             queryset = queryset.filter(sold_source__icontains=buyer)
