@@ -1,11 +1,10 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from . import views
+from .views import TransactionHistoryViewSet
 
 router = DefaultRouter()
-# router.register('transactions', views.TransactionViewSet)
+router.register(r'transactions', TransactionHistoryViewSet, basename='transaction')
 
 urlpatterns = [
     path('', include(router.urls)),
-    # path('stats/', views.TransactionStatsView.as_view(), name='transaction_stats'),
 ]
