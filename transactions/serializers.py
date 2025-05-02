@@ -26,7 +26,7 @@ class TransactionHistorySerializer(serializers.ModelSerializer):
         fields = [
             'id', 'transaction_type', 'product', 'product_name', 'amount', 
             'date', 'notes', 'sale_category', 'customer', 'customer_name',
-            'expenses', 'profit', 'created_at', 'updated_at'
+            'expenses', 'profit', 'created_at', 'updated_at', 'purchase_price', 'sale_price', 'quantity'
         ]
     
     def get_customer_name(self, obj):
@@ -50,7 +50,7 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
         model = TransactionHistory
         fields = [
             'product', 'transaction_type', 'amount', 'date', 
-            'notes', 'sale_category', 'customer', 'expenses'
+            'notes', 'sale_category', 'customer', 'expenses', 'purchase_price', 'sale_price', 'quantity',
         ]
     
     def validate(self, data):

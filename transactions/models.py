@@ -19,8 +19,11 @@ class TransactionHistory(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='transactions_user')
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='transactions_product')
     transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPE_CHOICES)
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    purchase_price = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    sale_price = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     date = models.DateField()
+    quantity = models.IntegerField(default=1)
     notes = models.TextField(blank=True, null=True)
     
     sale_category = models.CharField(max_length=20, choices=SALE_CATEGORY_CHOICES, blank=True, null=True)
@@ -43,3 +46,4 @@ class TransactionHistory(models.Model):
             total_expenses = sum(expense['amount'] for expense in self.expenses.values())
             
             return self.amount - purchase_price - total_expenses
+        return None
