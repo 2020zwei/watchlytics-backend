@@ -178,37 +178,45 @@ class DashboardStatsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
+        user = request.user
         today = timezone.now().date()
         seven_days_ago = today - timedelta(days=7)
         
         categories_count = Category.objects.filter(
+            products__owner=user,
             products__created_at__gte=seven_days_ago
         ).distinct().count()
 
         total_products = Product.objects.filter(
+            owner=user,
             created_at__gte=seven_days_ago
         ).count()
         
         revenue = TransactionHistory.objects.filter(
+            product__owner=user,
             transaction_type='sale',
             date__gte=seven_days_ago
         ).aggregate(total=Sum('amount'))['total'] or 0
         
         top_selling_count = TransactionHistory.objects.filter(
+            product__owner=user,
             transaction_type='sale',
             date__gte=seven_days_ago
         ).count()
         
         top_selling_cost = TransactionHistory.objects.filter(
+            product__owner=user,
             transaction_type='sale',
             date__gte=seven_days_ago
         ).aggregate(total=Sum('product__buying_price'))['total'] or 0
         
         ordered_count = Product.objects.filter(
+            owner=user,
             availability='reserved'
         ).count()
         
         not_in_stock = Product.objects.filter(
+            owner=user,
             quantity=0,
             availability='in_stock'
         ).count()

@@ -1,12 +1,13 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from . import views
+from .views import MarketDataViewSet
 
 router = DefaultRouter()
-# router.register('market-data', views.MarketDataViewSet)
+router.register(r'market-data', MarketDataViewSet)
 
 urlpatterns = [
-    path('', include(router.urls)),
-    # path('refresh/<int:watch_model_id>/', views.RefreshMarketDataView.as_view(), name='refresh_market_data'),
-    # path('trends/', views.MarketTrendsView.as_view(), name='market_trends'),
+    path('/', include(router.urls)),
+    path('/market-comparison/', 
+         MarketDataViewSet.as_view({'get': 'market_comparison'}), 
+         name='market-comparison'),
 ]
