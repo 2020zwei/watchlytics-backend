@@ -7,7 +7,7 @@ router.register(r'market-data', MarketDataViewSet)
 
 urlpatterns = [
     path('/', include(router.urls)),
-    path('/market-comparison/', 
+    path('market-comparison/', 
          MarketDataViewSet.as_view({'get': 'market_comparison'}), 
          name='market-comparison'),
 ]
