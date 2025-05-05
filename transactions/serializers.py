@@ -50,7 +50,8 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
             '%m/%d/%Y %H:%M:%S',
             '%d-%m-%Y %H:%M:%S',
             '%Y-%m-%d',        
-            '%d-%m-%y',        
+            '%d-%m-%y',
+            '%d-%m-%Y',
         ],
     )
     
