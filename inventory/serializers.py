@@ -11,6 +11,8 @@ class ProductSerializer(serializers.ModelSerializer):
     is_sold = serializers.ReadOnlyField()
     calculated_profit = serializers.ReadOnlyField()
     category_name = serializers.SerializerMethodField()
+    date_purchased = serializers.DateTimeField(format="%d-%m-%Y")
+    date_sold = serializers.DateTimeField(format="%d-%m-%Y", required=False, allow_null=True)
     
     class Meta:
         model = Product

@@ -17,13 +17,11 @@ class TransactionHistory(models.Model):
     )
     
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='transactions_user')
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='transactions_product')
+    name_of_trade = models.CharField(max_length=255, blank=True, null=True)
     transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPE_CHOICES)
-    amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    date = models.DateField()
     purchase_price = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     sale_price = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
-    date = models.DateField()
-    quantity = models.IntegerField(default=1)
     notes = models.TextField(blank=True, null=True)
     
     sale_category = models.CharField(max_length=20, choices=SALE_CATEGORY_CHOICES, blank=True, null=True)
@@ -35,15 +33,40 @@ class TransactionHistory(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"{self.transaction_type} - {self.product} - {self.amount}"
+        return f"{self.name_of_trade or self.transaction_type} - {self.date}"
+    
+    @property
+    def total_purchase_price(self):
+        return sum(item.quantity * (item.purchase_price or item.product.buying_price) for item in self.transaction_items.all())
+    
+    @property
+    def total_sale_price(self):
+        return sum(item.quantity * (item.sale_price or item.product.selling_price) for item in self.transaction_items.all())
     
     @property
     def profit(self):
-        """Calculate profit if it's a sale transaction"""
         if self.transaction_type == 'sale':
-            purchase_price = self.product.buying_price
-            
             total_expenses = sum(expense['amount'] for expense in self.expenses.values())
-            
-            return self.amount - purchase_price - total_expenses
+            return self.total_sale_price - self.total_purchase_price - total_expenses
         return None
+
+
+class TransactionItem(models.Model):
+    transaction = models.ForeignKey(TransactionHistory, on_delete=models.CASCADE, related_name='transaction_items')
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='transaction_items')
+    quantity = models.IntegerField(default=1)
+    purchase_price = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    sale_price = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    
+    def __str__(self):
+        return f"{self.product.product_name} - {self.quantity}"
+    
+    @property
+    def total_purchase_price(self):
+        price = self.purchase_price or self.product.buying_price
+        return self.quantity * price
+    
+    @property
+    def total_sale_price(self):
+        price = self.sale_price or self.product.selling_price
+        return self.quantity * price
