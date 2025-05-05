@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 import tempfile
 import uuid
+import shutil
 from decimal import Decimal
 from django.core.management.base import BaseCommand
 from market_insights.models import MarketData
@@ -111,18 +112,39 @@ class Command(BaseCommand):
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
         
-        # Create a unique user data directory with UUID to ensure it's not already in use
-        unique_dir = os.path.join(tempfile.gettempdir(), f"chrome_profile_{uuid.uuid4().hex}")
-        options.add_argument(f"--user-data-dir={unique_dir}")
+        # Create a unique user data directory with UUID and ensure it's clean
+        unique_dir = None
+        driver = None
         
-        driver = webdriver.Chrome(options=options)
-        
-        # Mask WebDriver
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        try:
+            # Generate a truly unique directory name using UUID
+            unique_id = uuid.uuid4().hex
+            unique_dir = os.path.join(tempfile.gettempdir(), f"chrome_profile_{unique_id}")
+            
+            # Ensure directory doesn't exist before creating it
+            if os.path.exists(unique_dir):
+                shutil.rmtree(unique_dir)
+            
+            # Create fresh directory
+            os.makedirs(unique_dir, exist_ok=True)
+            
+            options.add_argument(f"--user-data-dir={unique_dir}")
+            self.stdout.write(f"Created user data directory: {unique_dir}")
+            
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f"Error setting up user data directory: {str(e)}"))
+            # Fallback to using a simpler directory name if UUID fails
+            unique_dir = os.path.join(tempfile.gettempdir(), f"chrome_profile_fallback_{int(time.time())}")
+            options.add_argument(f"--user-data-dir={unique_dir}")
         
         all_watches_data = []
         
         try:
+            driver = webdriver.Chrome(options=options)
+            
+            # Mask WebDriver
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
             # Handle cookie consent once at the beginning
             base_url = 'https://www.chrono24.com/watches/mens-watches--62.htm'
             driver.get(base_url)
@@ -399,9 +421,24 @@ class Command(BaseCommand):
             
             return all_watches_data
         
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f"Error during scraping: {str(e)}"))
+            return []
+            
         finally:
-            # Close the browser
-            driver.quit()
+            try:
+                if driver:
+                    driver.quit()
+            except Exception as e:
+                self.stdout.write(self.style.WARNING(f"Error closing Chrome driver: {str(e)}"))
+                
+            # Clean up the temporary directory
+            try:
+                if unique_dir and os.path.exists(unique_dir):
+                    shutil.rmtree(unique_dir)
+                    self.stdout.write(f"Cleaned up user data directory: {unique_dir}")
+            except Exception as e:
+                self.stdout.write(self.style.WARNING(f"Error cleaning up user data directory: {str(e)}"))
 
     def handle(self, *args, **options):
         self.stdout.write(self.style.SUCCESS('Starting Chrono24 watch data extraction...'))
