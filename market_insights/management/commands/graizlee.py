@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 from decimal import Decimal
 import tempfile
+import uuid
 from django.core.management.base import BaseCommand
 from market_insights.models import MarketData
 from selenium import webdriver
@@ -149,9 +150,10 @@ class Command(BaseCommand):
         options.add_argument("--disable-dev-shm-usage")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
-
-        temp_user_data_dir = tempfile.mkdtemp()
-        options.add_argument(f"--user-data-dir={temp_user_data_dir}")
+        
+        # Create a unique user data directory with UUID to ensure it's not already in use
+        unique_dir = os.path.join(tempfile.gettempdir(), f"chrome_profile_{uuid.uuid4().hex}")
+        options.add_argument(f"--user-data-dir={unique_dir}")
         
         driver = webdriver.Chrome(options=options)
         
