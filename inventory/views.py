@@ -15,13 +15,12 @@ from django.db.models import Sum, Count, Q, F
 from .pagination import CustomPagination
 import csv
 import openpyxl
-import io
-from .serializers import ProductCSVUploadSerializer
 from .models import Product, User, Category
 from django.utils.dateparse import parse_date
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from django.db import transaction
+from transactions.models import TransactionHistory, TransactionItem
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -192,23 +191,22 @@ class DashboardStatsView(APIView):
             created_at__gte=seven_days_ago
         ).count()
         
-        revenue = TransactionHistory.objects.filter(
-            product__owner=user,
+        sales_transactions = TransactionHistory.objects.filter(
+            user=user,
             transaction_type='sale',
             date__gte=seven_days_ago
-        ).aggregate(total=Sum('amount'))['total'] or 0
+        )
         
-        top_selling_count = TransactionHistory.objects.filter(
-            product__owner=user,
-            transaction_type='sale',
-            date__gte=seven_days_ago
-        ).count()
+        revenue = sum(transaction.total_sale_price for transaction in sales_transactions)
         
-        top_selling_cost = TransactionHistory.objects.filter(
-            product__owner=user,
-            transaction_type='sale',
-            date__gte=seven_days_ago
-        ).aggregate(total=Sum('product__buying_price'))['total'] or 0
+        transaction_items = TransactionItem.objects.filter(
+            transaction__user=user,
+            transaction__transaction_type='sale',
+            transaction__date__gte=seven_days_ago
+        )
+        
+        top_selling_count = transaction_items.count()
+        top_selling_cost = sum(item.total_purchase_price for item in transaction_items)
         
         ordered_count = Product.objects.filter(
             owner=user,
@@ -220,6 +218,8 @@ class DashboardStatsView(APIView):
             quantity=0,
             availability='in_stock'
         ).count()
+        
+        profit = sum(transaction.profit or 0 for transaction in sales_transactions)
         
         return Response({
             "categories": {
@@ -239,6 +239,10 @@ class DashboardStatsView(APIView):
             "low_stocks": {
                 "ordered": ordered_count,
                 "not_in_stock": not_in_stock
+            },
+            "profit": {
+                "amount": float(profit),
+                "label": "Last 7 days"
             }
         })
     
