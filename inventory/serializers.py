@@ -7,7 +7,7 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'description']
 
 class ProductSerializer(serializers.ModelSerializer):
-    days_in_inventory = serializers.ReadOnlyField()
+    # days_in_inventory = serializers.ReadOnlyField()
     is_sold = serializers.ReadOnlyField()
     calculated_profit = serializers.ReadOnlyField()
     category_name = serializers.SerializerMethodField()
@@ -22,7 +22,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'msrp', 'sold_price', 'whole_price', 'website_price', 'profit_margin',
             'quantity', 'unit', 'date_purchased', 'date_sold', 'hold_time',
             'source_of_sale', 'purchased_from', 'sold_source', 'listed_on',
-            'image', 'days_in_inventory', 'is_sold', 'availability', 'condition',
+            'image', 'is_sold', 'availability', 'condition',
             'calculated_profit', 'serial_number'
         ]
         read_only_fields = ['created_at', 'updated_at', 'owner']

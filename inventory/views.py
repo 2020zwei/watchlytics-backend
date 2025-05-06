@@ -44,10 +44,26 @@ class ProductViewSet(viewsets.ModelViewSet):
         seller = self.request.query_params.get('seller')
         
         if brands:
-            brand_filter = Q()
+            brand_queries = []
             for brand in brands:
-                brand_filter |= Q(product_name__icontains=brand)
-            queryset = queryset.filter(brand_filter)
+                brand_words = brand.strip().split()
+                if brand_words:
+                    product_filters = []
+                    for word in brand_words:
+                        word_filter = Q(product_name__icontains=word) | Q(category__name__icontains=word)
+                        product_filters.append(word_filter)
+                    
+                    if product_filters:
+                        combined_filter = product_filters[0]
+                        for filter_item in product_filters[1:]:
+                            combined_filter &= filter_item
+                        brand_queries.append(combined_filter)
+            
+            if brand_queries:
+                brand_filter = brand_queries[0]
+                for query in brand_queries[1:]:
+                    brand_filter |= query
+                queryset = queryset.filter(brand_filter)
         
         if start_date:
             queryset = queryset.filter(date_purchased__gte=start_date)
