@@ -62,7 +62,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             'product_name', 'product_id', 'category',
             'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
             'msrp', 'whole_price', 'website_price', 'profit_margin',
-            'quantity', 'unit', 'date_purchased', 'hold_time', 'sold_price', 'source_of_sale'
+            'quantity', 'unit', 'date_purchased', 'hold_time', 'sold_price', 'source_of_sale',
             'purchased_from', 'listed_on', 'image', 'availability', 'date_sold', 'serial_number',
         ]
     
