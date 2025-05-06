@@ -28,7 +28,7 @@ class TransactionHistorySerializer(serializers.ModelSerializer):
     profit = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     total_purchase_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     total_sale_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
-    date = serializers.DateField(format="%d-%m-%Y")
+    date = serializers.DateField(format="%Y-%m-%d")
     
     class Meta:
         model = TransactionHistory
@@ -53,6 +53,7 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
             '%d-%m-%y',
             '%d-%m-%Y',
         ],
+        format='%Y-%m-%d',
     )
     
     class Meta:
