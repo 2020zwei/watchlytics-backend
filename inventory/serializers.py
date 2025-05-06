@@ -39,6 +39,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             '%d-%m-%Y %H:%M:%S',
             '%Y-%m-%d',         
         ],
+        format='%Y-%m-%d',
     )
 
     date_sold = serializers.DateTimeField(
@@ -51,6 +52,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             '%d-%m-%Y %H:%M:%S',
             '%Y-%m-%d',
         ],
+        format='%Y-%m-%d',
         required=False,
         allow_null=True
     )
