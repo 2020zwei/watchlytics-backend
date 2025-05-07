@@ -15,11 +15,11 @@ class ProductSerializer(serializers.ModelSerializer):
     date_purchased = serializers.DateTimeField(format="%Y-%m-%d")
     date_sold = serializers.DateTimeField(format="%Y-%m-%d", required=False, allow_null=True)
     hold_time = serializers.SerializerMethodField()
-    
+    reference_number = serializers.SerializerMethodField()
     class Meta:
         model = Product
         fields = [
-            'id', 'owner', 'quantity', 'product_id', 'product_name', 'date_purchased', 'date_sold',
+            'id', 'owner', 'quantity', 'reference_number', 'product_name', 'date_purchased', 'date_sold',
             'hold_time', 'source_of_sale', 'category_name', 'category',
             'buying_price',  'sold_price', 'whole_price','profit', 'profit_margin',
             'shipping_price', 'repair_cost', 'fees', 'commission',
@@ -35,6 +35,9 @@ class ProductSerializer(serializers.ModelSerializer):
     def get_hold_time(self, obj):
         if not obj.date_purchased:
             return None
+    
+    def get_reference_number(self, obj):
+        return obj.product_id
         
         end_date = obj.date_sold if obj.date_sold else timezone.now()
         
