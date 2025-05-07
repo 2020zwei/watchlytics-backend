@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Category, Product
-
+from django.utils import timezone
+from datetime import datetime
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
@@ -9,26 +10,36 @@ class CategorySerializer(serializers.ModelSerializer):
 class ProductSerializer(serializers.ModelSerializer):
     # days_in_inventory = serializers.ReadOnlyField()
     is_sold = serializers.ReadOnlyField()
-    calculated_profit = serializers.ReadOnlyField()
+    profit = serializers.ReadOnlyField()
     category_name = serializers.SerializerMethodField()
     date_purchased = serializers.DateTimeField(format="%Y-%m-%d")
     date_sold = serializers.DateTimeField(format="%Y-%m-%d", required=False, allow_null=True)
+    hold_time = serializers.SerializerMethodField()
     
     class Meta:
         model = Product
         fields = [
-            'id', 'owner', 'product_name', 'product_id', 'category_name', 'category',
-            'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
-            'msrp', 'sold_price', 'whole_price', 'website_price', 'profit_margin',
-            'quantity', 'unit', 'date_purchased', 'date_sold', 'hold_time',
-            'source_of_sale', 'purchased_from', 'sold_source', 'listed_on',
+            'id', 'owner', 'quantity', 'product_id', 'product_name', 'date_purchased', 'date_sold',
+            'hold_time', 'source_of_sale', 'category_name', 'category',
+            'buying_price',  'sold_price', 'whole_price','profit', 'profit_margin',
+            'shipping_price', 'repair_cost', 'fees', 'commission',
+            'msrp', 'website_price', 'purchased_from', 'sold_source', 'listed_on',
             'image', 'is_sold', 'availability', 'condition',
-            'calculated_profit', 'serial_number'
+            'serial_number'
         ]
         read_only_fields = ['created_at', 'updated_at', 'owner']
 
     def get_category_name(self, obj):
         return obj.category.name if obj.category else None
+    
+    def get_hold_time(self, obj):
+        if not obj.date_purchased:
+            return None
+        
+        end_date = obj.date_sold if obj.date_sold else timezone.now()
+        
+        delta = end_date - obj.date_purchased
+        return delta.days
 class ProductCreateSerializer(serializers.ModelSerializer):
     date_purchased = serializers.DateTimeField(
         input_formats=[
