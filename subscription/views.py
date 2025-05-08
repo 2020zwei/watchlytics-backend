@@ -10,35 +10,15 @@ from rest_framework.views import APIView
 from django.utils import timezone
 from datetime import timedelta
 from auth_.utils import CustomException
-from subscription.stripe_pay import make_stripe_order_payment, validate_stripe_fields, get_user_subscriptions_by_status, get_payment_method_id, attach_payment_method, modify_subscription
-from subscription.stripe_processor import StripeEventProcessor
 from .pagination import CustomPagination
-from django.db.models import Case, When, Value, IntegerField
+from subscription.stripe_pay import make_stripe_order_payment, validate_stripe_fields, get_user_subscriptions_by_status
+from subscription.stripe_processor import StripeEventProcessor
 
 class PlanListAPIView(generics.ListAPIView):
+    queryset = Plan.objects.all()
     serializer_class = PlanSerializer
     permission_classes = [permissions.AllowAny]
-    pagination_class = CustomPagination 
-    
-    def get_queryset(self):
-        return Plan.objects.annotate(
-            custom_order=Case(
-                When(name='FREE', then=Value(1)),
-                When(name='BASIC', then=Value(2)),
-                When(name='ADVANCED', then=Value(3)),
-                When(name='PRO', then=Value(4)),
-                default=Value(5),
-                output_field=IntegerField()
-            )
-        ).order_by('custom_order')
-
-    def get(self, request, *args, **kwargs):
-        response = super().get(request, *args, **kwargs)
-        response["Access-Control-Allow-Origin"] = "*"
-        response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-        response["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        return response
-
+    pagination_class = CustomPagination
 
 class PlanDetailAPIView(generics.RetrieveAPIView):
     queryset = Plan.objects.all()
@@ -75,11 +55,10 @@ class StripePayment(APIView):
         try:
             subscription = Subscription.objects.filter(user=user, is_active=True).first()
             
-            if not subscription or not subscription.stripe_subscription_id:
+            if not subscription:
                 raise CustomException("Subscription not found")
 
-            if subscription.plan.name == 'FREE':
-                response = stripe.Subscription.delete(subscription.stripe_subscription_id)
+            if subscription.plan.name == 'FREE' or not subscription.stripe_subscription_id:
                 
                 subscription.is_active = False
                 subscription.status = 'canceled'
@@ -96,47 +75,57 @@ class StripePayment(APIView):
         except Exception as e:
             raise CustomException({"message": str(e)})
 
-    def modify_subscription(self, user, new_plan_id, payment_method_token=None):
+    def modify_subscription(self, user, new_plan_id):
         try:
             subscription = Subscription.objects.filter(user=user, is_active=True).first()
             
-            if not subscription or not subscription.stripe_subscription_id:
+            if not subscription:
                 raise CustomException("Subscription not found")
             
-            payment_method_id = None
-            if payment_method_token:
-                payment_result = get_payment_method_id(payment_method_token)
-                if not payment_result.get('status'):
-                    raise CustomException(f"Invalid payment method: {payment_result.get('result').user_message}")
+            if new_plan_id == 'FREE' or new_plan_id.upper() == 'FREE':
+                if subscription.stripe_subscription_id:
+                    try:
+                        stripe.Subscription.delete(subscription.stripe_subscription_id)
+                    except Exception as e:
+                        print(f"Error cancelling Stripe subscription: {str(e)}")
                 
-                payment_method_id = payment_result.get('result')
+                plan = Plan.objects.get(name='FREE')
                 
-                if user.stripe_customer_id:
-                    attach_result = attach_payment_method(user.stripe_customer_id, payment_method_id)
-                    if not attach_result.get('status'):
-                        raise CustomException(f"Could not attach payment method: {attach_result.get('result').user_message}")
-            
-            modify_result = modify_subscription(
-                subscription.stripe_subscription_id, 
-                new_plan_id,
-                payment_method_id
-            )
-            
-            if not modify_result.get('status'):
-                if modify_result.get('card_declined'):
-                    raise CustomException(f"Card declined: {modify_result.get('message')}")
-                else:
-                    error_message = modify_result.get('result').user_message
-                    raise CustomException(f"Error modifying subscription: {error_message}")
-            
-            plan = Plan.objects.filter(stripe_price_id=new_plan_id).first()
-            if plan:
                 subscription.plan = plan
+                subscription.stripe_subscription_id = None
+                subscription.start_date = timezone.now()
+                subscription.end_date = subscription.start_date + timedelta(days=30)
+                subscription.status = 'active'
                 subscription.save()
                 
+                return True
+            
+            if subscription.plan.name == 'FREE' or not subscription.stripe_subscription_id:
+                
+                # Mark FREE plan as inactive
+                subscription.is_active = False
+                subscription.status = 'canceled'
+                subscription.save()
+                
+                # The regular subscription creation flow will handle the rest
+                return False
+            
+            # Regular paid plan modification
+            stripe_subscription = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
+            subscription_item_id = stripe_subscription['items']['data'][0]['id']
+            
+            response = stripe.Subscription.modify(
+                subscription.stripe_subscription_id,
+                cancel_at_period_end=False,
+                proration_behavior="always_invoice",
+                items=[{
+                    "id": subscription_item_id,
+                    "price": new_plan_id
+                }],
+                metadata={"price_id": new_plan_id, "is_upgrade": True}
+            )
+            
             return True
-        except CustomException as e:
-            raise e
         except Exception as e:
             raise CustomException(str(e))
 
@@ -154,74 +143,98 @@ class StripePayment(APIView):
             response = {'success': False, 'message': "We did not find any active subscription."}
             return Response(response, status.HTTP_400_BAD_REQUEST)
 
-    def create_free_subscription(self, user):
+    def apply_free_plan(self, user):
+        """Apply free plan subscription without requiring payment information"""
         try:
+            # Check if user already has an active subscription
             existing_subscription = Subscription.objects.filter(
-                user=user,
-                is_active=True
+                user=user
             ).first()
-            
-            if existing_subscription:
-                if existing_subscription.plan.name == 'FREE':
-                    return {
-                        'success': False,
-                        'message': "You already have an active FREE plan.",
-                        'is_duplicate': True
-                    }, status.HTTP_400_BAD_REQUEST
-                else:
-                    self.cancel_subscription(user)
             
             free_plan = Plan.objects.filter(name='FREE').first()
             if not free_plan:
-                return {
+                return Response({
                     'success': False,
-                    'message': "FREE plan not found in the system."
-                }, status.HTTP_400_BAD_REQUEST
+                    'message': 'FREE plan not found in the system.'
+                }, status.HTTP_400_BAD_REQUEST)
             
-            start_date = timezone.now()
-            end_date = start_date + timedelta(days=30)
-            
-            Subscription.objects.create(
-                user=user,
-                plan=free_plan,
-                stripe_subscription_id=None,
-                status='active',
-                start_date=start_date,
-                end_date=end_date,
-                is_active=True
-            )
-            
-            return {
-                'success': True,
-                'message': "FREE subscription created successfully."
-            }, status.HTTP_200_OK
+            if existing_subscription:
+                if existing_subscription.is_active and existing_subscription.plan.name == 'FREE':
+                    return Response({
+                        'success': False,
+                        'message': 'You are already on the FREE plan.'
+                    }, status.HTTP_400_BAD_REQUEST)
+                
+                if existing_subscription.stripe_subscription_id:
+                    try:
+                        stripe.Subscription.delete(existing_subscription.stripe_subscription_id)
+                    except Exception as e:
+                        print(f"Error cancelling Stripe subscription: {str(e)}")
+                
+                # Update the existing subscription to FREE plan
+                start_date = timezone.now()
+                end_date = start_date + timedelta(days=30)  # FREE plan valid for 30 days
+                
+                existing_subscription.plan = free_plan
+                existing_subscription.stripe_subscription_id = None
+                existing_subscription.status = 'active'
+                existing_subscription.start_date = start_date
+                existing_subscription.end_date = end_date
+                existing_subscription.is_active = True
+                existing_subscription.save()
+                
+                return Response({
+                    'success': True,
+                    'message': 'FREE plan has been successfully activated.'
+                }, status.HTTP_200_OK)
+            else:
+                # If no subscription exists at all, create a new one
+                start_date = timezone.now()
+                end_date = start_date + timedelta(days=30)  # FREE plan valid for 30 days
+                
+                Subscription.objects.create(
+                    user=user,
+                    plan=free_plan,
+                    stripe_subscription_id=None,
+                    status='active',
+                    start_date=start_date,
+                    end_date=end_date,
+                    is_active=True
+                )
+                
+                return Response({
+                    'success': True,
+                    'message': 'FREE plan has been successfully activated.'
+                }, status.HTTP_200_OK)
             
         except Exception as e:
-            return {
+            return Response({
                 'success': False,
-                'message': f"Unable to create FREE subscription: {str(e)}"
-            }, status.HTTP_400_BAD_REQUEST
+                'message': f'Unable to apply FREE plan: {str(e)}'
+            }, status.HTTP_400_BAD_REQUEST)
 
     def post(self, request, *args, **kwargs):
-
         try:
             user = request.user
+            plan_name = request.data.get('plan_name', '')
+            price_id = request.data.get('price_id', '')
             
             if request.data.get('is_cancelled_subscription', "false").lower() == "true":
                 return self.cancel_subscription_flow(user=user)
+            
+            if plan_name.upper() == 'FREE':
+                return self.apply_free_plan(user)
 
-            plan_name = request.data.get('plan_name')
-            price_id = request.data.get('price_id')
-
-            if not plan_name:
-                response = {'success': False, 'message': "Plan name is required"}
+            existing_subscription = Subscription.objects.filter(user=user).first()
+            
+            if existing_subscription and existing_subscription.is_active and existing_subscription.plan.name == plan_name:
+                message = f"You are already using {plan_name} plan. Please cancel it or upgrade to a different plan."
+                response = {'success': False, 'message': message, 'is_duplicate': True}
                 return Response(response, status.HTTP_400_BAD_REQUEST)
 
-            if plan_name.upper() == 'FREE':
-                response_data, status_code = self.create_free_subscription(user)
-                return Response(response_data, status_code)
-                
-            if not validate_stripe_fields(request.data):
+            # Validate required fields for paid plans
+            required_fields = validate_stripe_fields(request.data)
+            if not required_fields:
                 response = {'success': False, 'message': "Some Payment Fields are missing"}
                 return Response(response, status.HTTP_400_BAD_REQUEST)
 
@@ -231,61 +244,64 @@ class StripePayment(APIView):
                 response = {'success': False, 'message': message}
                 return Response(response, status.HTTP_400_BAD_REQUEST)
 
-            existing_subscription = Subscription.objects.filter(
-                user=user, 
-                is_active=True
-            ).first()
-
-            if existing_subscription and existing_subscription.plan.name == plan_name:
-                message = f"You are already using {plan_name} plan. Please cancel it or upgrade to a different plan."
-                response = {'success': False, 'message': message, 'is_duplicate': True}
-                return Response(response, status.HTTP_400_BAD_REQUEST)
-
+            # If user has an existing subscription, modify it
             if existing_subscription:
-                try:
-                    is_valid = validate_stripe_fields({
-                        **request.data,
-                        'is_modification': 'true'
-                        })
-                    
-                    payment_method_token = request.data.get('payment_method_token')
-                    self.modify_subscription(user, price_id, payment_method_token)
-                    return Response({'success': True, 'message': "Subscription updated successfully"},
-                            status.HTTP_200_OK)
-                except CustomException as e:
-                    response = {
-                        'success': False, 
-                        'message': str(e),
-                        'card_declined': 'card declined' in str(e).lower()
-                        }
-                    return Response(response, status.HTTP_400_BAD_REQUEST)
+                if existing_subscription.is_active:
+                    try:
+                        get_response_data = self.modify_subscription(user, price_id)
+                        if get_response_data is False:
+                            message = 'Problem with your plan change. Please contact customer support or try again after logout.'
+                            response = {'success': False, 'message': message, 'card_declined': False}
+                            return Response(response, status.HTTP_400_BAD_REQUEST)
+                        else:
+                            return Response({'success': True, 'message': "Subscription updated successfully"}, status.HTTP_200_OK)
+                    except Exception as modify_error:
+                        message = f'Problem with your plan change: {str(modify_error)}'
+                        response = {'success': False, 'message': message, 'card_declined': 'card declined' in str(modify_error).lower()}
+                        return Response(response, status.HTTP_400_BAD_REQUEST)
+                else:
+                    existing_subscription.plan = plan
+                    existing_subscription.stripe_subscription_id = None  # Will be updated after payment processing
+                    existing_subscription.is_active = True
+                    existing_subscription.status = 'active'
+                    existing_subscription.start_date = timezone.now()
+                    existing_subscription.end_date = timezone.now() + timedelta(days=30 if plan.name != 'PRO' else 365)
+            
+            active_subscriptions = get_user_subscriptions_by_status(user, 'active')
+            if active_subscriptions and active_subscriptions.get('data', []):
+                message = "You already have an active subscription. Please cancel that first."
+                response = {'success': False, 'message': message}
+                return Response(response, status=status.HTTP_400_BAD_REQUEST)
+
+            incomplete_subscriptions = get_user_subscriptions_by_status(user, 'incomplete')
+            if incomplete_subscriptions and incomplete_subscriptions.get('data', []):
+                message = "You have an incomplete subscription. Please update your payment method."
+                response = {'success': False, 'message': message}
+                return Response(response, status=status.HTTP_400_BAD_REQUEST)
+
+            payment_intent = make_stripe_order_payment({
+                'payment_method_token': request.data.get('payment_method_token'),
+                'price_id': price_id,
+                'user_id': str(request.user.id),
+            })
+
+            if not payment_intent['success']:
+                response = {
+                    'success': False,
+                    'message': payment_intent['message'],
+                    'card_declined': payment_intent.get('card_declined', False)
+                }
+                return Response(response, status.HTTP_400_BAD_REQUEST)
+            
+            if existing_subscription:
+                existing_subscription.plan = plan
+                existing_subscription.stripe_subscription_id = payment_intent['stripe_subscription_id']
+                existing_subscription.status = 'active'
+                existing_subscription.start_date = timezone.now()
+                existing_subscription.end_date = timezone.now() + timedelta(days=30 if plan.name != 'PRO' else 365)
+                existing_subscription.is_active = True
+                existing_subscription.save()
             else:
-                active_subscriptions = get_user_subscriptions_by_status(user, 'active')
-                if active_subscriptions and active_subscriptions.get('data', []):
-                    message = "You already have an active subscription. Please cancel that first."
-                    response = {'success': False, 'message': message}
-                    return Response(response, status=status.HTTP_400_BAD_REQUEST)
-
-                incomplete_subscriptions = get_user_subscriptions_by_status(user, 'incomplete')
-                if incomplete_subscriptions and incomplete_subscriptions.get('data', []):
-                    message = "You have an incomplete subscription. Please update your payment method."
-                    response = {'success': False, 'message': message}
-                    return Response(response, status=status.HTTP_400_BAD_REQUEST)
-
-                payment_intent = make_stripe_order_payment({
-                    'payment_method_token': request.data.get('payment_method_token'),
-                    'price_id': request.data['price_id'],
-                    'user_id': str(request.user.id),
-                })
-
-                if not payment_intent['success']:
-                    response = {
-                        'success': False, 
-                        'message': payment_intent['message'],
-                        'card_declined': payment_intent.get('card_declined', False)
-                    }
-                    return Response(response, status.HTTP_400_BAD_REQUEST)
-                
                 start_date = timezone.now()
                 end_date = start_date + timedelta(days=30 if plan.name != 'PRO' else 365)
                 
@@ -299,8 +315,8 @@ class StripePayment(APIView):
                     is_active=True
                 )
 
-                response = {'success': True, 'message': payment_intent['message']}
-                return Response(response, status.HTTP_200_OK)
+            response = {'success': True, 'message': payment_intent['message']}
+            return Response(response, status.HTTP_200_OK)
 
         except Exception as e:
             response = {
@@ -312,7 +328,7 @@ class StripePayment(APIView):
 
     def get(self, request, *args, **kwargs):
         try:
-            plans = Plan.objects.exclude(name='FREE').order_by('id')
+            plans = Plan.objects.all().order_by('id')
 
             if plans:
                 serializer = PlanSerializer(plans, many=True)
