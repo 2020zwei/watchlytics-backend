@@ -229,7 +229,7 @@ class StripePayment(APIView):
             
             if existing_subscription and existing_subscription.is_active and existing_subscription.plan.name == plan_name:
                 message = f"You are already using {plan_name} plan. Please cancel it or upgrade to a different plan."
-                response = {'success': False, 'message': message}
+                response = {'success': False, 'message': message, 'is_duplicate': True}
                 return Response(response, status.HTTP_400_BAD_REQUEST)
 
             # Validate required fields for paid plans
