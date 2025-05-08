@@ -247,13 +247,18 @@ class StripePayment(APIView):
             # If user has an existing subscription, modify it
             if existing_subscription:
                 if existing_subscription.is_active:
-                    get_response_data = self.modify_subscription(user, price_id)
-                    if get_response_data is False:
-                        message = 'Problem with your plan change. Please contact customer support or try again after logout.'
-                        response = {'success': False, 'message': message, 'card_declined': 'card declined' in str(e).lower()}
+                    try:
+                        get_response_data = self.modify_subscription(user, price_id)
+                        if get_response_data is False:
+                            message = 'Problem with your plan change. Please contact customer support or try again after logout.'
+                            response = {'success': False, 'message': message, 'card_declined': False}
+                            return Response(response, status.HTTP_400_BAD_REQUEST)
+                        else:
+                            return Response({'success': True, 'message': "Subscription updated successfully"}, status.HTTP_200_OK)
+                    except Exception as modify_error:
+                        message = f'Problem with your plan change: {str(modify_error)}'
+                        response = {'success': False, 'message': message, 'card_declined': 'card declined' in str(modify_error).lower()}
                         return Response(response, status.HTTP_400_BAD_REQUEST)
-                    else:
-                        return Response({'success': True, 'message': "Subscription updated successfully"}, status.HTTP_200_OK)
                 else:
                     existing_subscription.plan = plan
                     existing_subscription.stripe_subscription_id = None  # Will be updated after payment processing
