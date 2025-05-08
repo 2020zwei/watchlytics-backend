@@ -35,14 +35,12 @@ class ProductSerializer(serializers.ModelSerializer):
     def get_hold_time(self, obj):
         if not obj.date_purchased:
             return None
+
+        start_date = obj.date_purchased
+        end_date = obj.date_sold or timezone.now()
+
+        return (end_date - start_date).days
     
-    # def get_reference_number(self, obj):
-    #     return obj.product_id
-        
-    #     end_date = obj.date_sold if obj.date_sold else timezone.now()
-        
-    #     delta = end_date - obj.date_purchased
-    #     return delta.days
 class ProductCreateSerializer(serializers.ModelSerializer):
     date_purchased = serializers.DateTimeField(
         input_formats=[
