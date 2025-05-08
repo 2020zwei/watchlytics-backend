@@ -18,7 +18,10 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['email', 'first_name', 'last_name', 'profile_picture', 'client_id', 'phone_number', 'date_joined', 'cover_picture', 'password']
-        extra_kwargs = {'password': {'write_only': True}}
+        extra_kwargs = {
+            'password': {'write_only': True},
+            'email': {'validators': []},
+        }
 
     def create(self, validated_data):
         return User.objects.create_user(**validated_data)
@@ -26,6 +29,13 @@ class UserSerializer(serializers.ModelSerializer):
     def get_date_joined(self, obj):
         return obj.date_joined.strftime("%d %B, %Y")
 
+    def validate_email(self, value):
+        user_qs = User.objects.filter(email=value)
+        if self.instance:
+            user_qs = user_qs.exclude(pk=self.instance.pk)
+        if user_qs.exists():
+            raise serializers.ValidationError("An account with this email already exists. Please log in or use a different email.")
+        return value
 class CustomAuthTokenSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)

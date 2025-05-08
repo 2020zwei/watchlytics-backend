@@ -35,7 +35,7 @@ class User(AbstractUser):
         ('accountant', 'Accountant'),
         ('analyst', 'Analyst'),
     )
-    
+
     username = None
     email = models.EmailField(unique=True)
     first_name = models.CharField(
