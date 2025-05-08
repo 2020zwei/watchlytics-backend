@@ -25,7 +25,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'shipping_price', 'repair_cost', 'fees', 'commission',
             'msrp', 'website_price', 'purchased_from', 'sold_source', 'listed_on',
             'image', 'is_sold', 'availability', 'condition',
-            'serial_number'
+            'serial_number', 'year'
         ]
         read_only_fields = ['created_at', 'updated_at', 'owner']
 
@@ -73,7 +73,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         fields = [
             'product_name', 'product_id', 'category',
             'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
-            'msrp', 'whole_price', 'website_price', 'profit_margin',
+            'msrp', 'whole_price', 'website_price', 'profit_margin', 'year',
             'quantity', 'unit', 'date_purchased', 'hold_time', 'sold_price', 'source_of_sale',
             'purchased_from', 'listed_on', 'image', 'availability', 'date_sold', 'serial_number',
         ]

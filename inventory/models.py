@@ -1,7 +1,7 @@
 from django.db import models
 from django.utils import timezone
 from auth_.models import User
-
+from datetime import datetime
 
 def product_image_path(instance, filename):
     return f'products/{instance.id}/{filename}'
@@ -71,6 +71,14 @@ class Product(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     serial_number = models.CharField(max_length=50, blank=True, null=True)
+
+    year = models.PositiveIntegerField(
+        choices=[(r, r) for r in range(1900, datetime.now().year + 1)],
+        verbose_name="Year",
+        default=datetime.now().year,
+        blank=False,
+        null=False
+    )
     class Meta:
         unique_together = (('owner', 'product_id'), ('owner', 'serial_number'))
     
