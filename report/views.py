@@ -350,7 +350,7 @@ class StockAgingAPIView(APIView):
         available_brands = Product.objects.filter(
             owner=user,
             availability='in_stock'
-        ).values_list('category', flat=True).distinct()
+        ).values_list('category__name', flat=True).distinct()
         
         available_models = Product.objects.filter(
             owner=user,
