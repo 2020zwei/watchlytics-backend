@@ -11,7 +11,7 @@ from inventory.models import Product, Category
 from .serializers import ProductSerializer, CategorySerializer, DashboardStatsSerializer
 import calendar
 from django.db.models.functions import Cast
-
+from django.db.models import CharField, Case, When, Value, Q
 
 
 class DashboardAPIView(APIView):
@@ -162,11 +162,11 @@ class BestSellingProductsAPIView(APIView):
                 # Build product data dictionary matching UI format
                 product_data = {
                     'product': product_name,
-                    'product_id': product_id,
-                    'category': category_name,
-                    'remaining_quantity': f"{remaining_quantity} Watches",  # Format as shown in UI
+                    'reference_number': product_id,
+                    'brand': category_name,
+                    'remaining_quantity': remaining_quantity,
                     'turn_over': float(sold_price),
-                    'increase_by': f"{increase_by}%"  # Format with % as shown in UI
+                    'increase_by': increase_by,
                 }
                 
                 best_selling.append(product_data)
@@ -181,14 +181,14 @@ class BestSellingProductsAPIView(APIView):
                 'product': 'Sample Product',
                 'product_id': 'SAMPLE001',
                 'category': 'Sample Category',
-                'remaining_quantity': '0 Watches',
+                'remaining_quantity': 0,
                 'turn_over': 0.0,
-                'increase_by': '0.0%'
+                'increase_by': 0.0
             })
         
         # Sort by profit margin (increase_by) in descending order
         if best_selling:
-            best_selling.sort(key=lambda x: float(x['increase_by'].replace('%', '')), reverse=True)
+            best_selling.sort(key=lambda x: x['increase_by'], reverse=True)
         
         # Return top products as shown in UI
         return Response(best_selling[:10] if best_selling else [])
