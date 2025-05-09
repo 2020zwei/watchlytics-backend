@@ -252,46 +252,138 @@ class StockAgingAPIView(APIView):
         # Get current date
         today = timezone.now().date()
         
-        # Calculate aging categories
-        aging_data = Product.objects.filter(
+        brands = self.request.query_params.getlist('brand')
+        model = request.query_params.get('model')
+        
+        query = Product.objects.filter(
             owner=user,
             availability='in_stock'
-        ).annotate(
-            age_days=Case(
-                When(date_purchased__isnull=False, 
-                     then=today - F('date_purchased')),
-                default=Value(0),
-                output_field=IntegerField()
-            ),
-            age_category=Case(
-                When(age_days__lt=30, then=Value('less_than_30')),
-                When(age_days__lt=60, then=Value('30_to_60')),
-                When(age_days__lt=90, then=Value('60_to_90')),
-                default=Value('more_than_90'),
-            )
-        ).values('age_category').annotate(
-            count=Count('id'),
-            value=Sum('buying_price')
-        ).order_by('age_category')
+        )
         
-        # Format the response to match UI
-        formatted_data = []
-        
-        for item in aging_data:
-            category_name = {
-                'less_than_30': 'Less than 30 days',
-                '30_to_60': '30 to 60 days',
-                '60_to_90': '60 to 90 days',
-                'more_than_90': 'More than 90 days'
-            }
+        if brands:
+            brand_queries = []
+            for brand in brands:
+                brand_words = brand.strip().split()
+                if brand_words:
+                    product_filters = []
+                    for word in brand_words:
+                        word_filter = Q(product_name__icontains=word) | Q(category__name__icontains=word)
+                        product_filters.append(word_filter)
+                    
+                    if product_filters:
+                        combined_filter = product_filters[0]
+                        for filter_item in product_filters[1:]:
+                            combined_filter &= filter_item
+                        brand_queries.append(combined_filter)
             
-            formatted_data.append({
-                'aging_category': category_name.get(item['age_category'], item['age_category']),
-                'count': item['count'],
-                'value': float(item['value'] or 0)
+            if brand_queries:
+                brand_filter = brand_queries[0]
+                for query in brand_queries[1:]:
+                    brand_filter |= query
+                queryset = queryset.filter(brand_filter)
+        if model:
+            query = query.filter(product_name=model)
+        
+        # days_30_ago = today - timedelta(days=30)
+        # days_60_ago = today - timedelta(days=60)
+        # days_90_ago = today - timedelta(days=90)
+
+        now = timezone.now()
+        days_30_ago = now - timedelta(days=30)
+        days_60_ago = now - timedelta(days=60)
+        days_90_ago = now - timedelta(days=90)
+        
+        products = query.annotate(
+            age_category=Case(
+                When(date_purchased__gte=days_30_ago, then=Value('less_than_30')),
+                When(date_purchased__gte=days_60_ago, then=Value('30_to_60')),
+                When(date_purchased__gte=days_90_ago, then=Value('60_to_90')),
+                default=Value('91_plus'),
+                output_field=CharField()
+            )
+        )
+        
+        stock_data = []
+        stock_count = 0
+        
+        product_groups = {}
+        for product in products.order_by('product_id', 'date_purchased'):
+            if not product.product_id:
+                continue
+                
+            if product.product_id not in product_groups:
+                stock_count += 1
+                stock_name = f"STK{stock_count}"
+                product_groups[product.product_id] = {
+                    'stock_ref': stock_name,
+                    'product_id': product.product_id,
+                    'less_than_30_days': 0,
+                    '30_to_60_days': 0,
+                    '60_to_90_days': 0,
+                    '91_plus_days': 0,
+                    'total': 0
+                }
+                
+            product_groups[product.product_id][f'{product.age_category}_days'] += 1
+            product_groups[product.product_id]['total'] += 1
+        
+        stock_aging_data = list(product_groups.values())
+        
+        if stock_count < 10:
+            ungrouped_products = products.filter(
+                ~Q(product_id__in=product_groups.keys())
+            ).order_by('date_purchased')[:10-stock_count]
+            
+            for product in ungrouped_products:
+                stock_count += 1
+                stock_name = f"STK{stock_count}"
+                stock_aging_data.append({
+                    'stock_ref': stock_name,
+                    'product_id': getattr(product, 'product_id', ''),
+                    'less_than_30_days': 1 if product.age_category == 'less_than_30' else 0,
+                    '30_to_60_days': 1 if product.age_category == '30_to_60' else 0,
+                    '60_to_90_days': 1 if product.age_category == '60_to_90' else 0,
+                    '91_plus_days': 1 if product.age_category == '91_plus' else 0,
+                    'total': 1
+                })
+        
+        available_brands = Product.objects.filter(
+            owner=user,
+            availability='in_stock'
+        ).values_list('category', flat=True).distinct()
+        
+        available_models = Product.objects.filter(
+            owner=user,
+            availability='in_stock'
+        ).values_list('product_name', flat=True).distinct()
+        
+        total_less_than_30 = products.filter(age_category='less_than_30').count()
+        total_30_to_60 = products.filter(age_category='30_to_60').count()
+        total_60_to_90 = products.filter(age_category='60_to_90').count()
+        total_91_plus = products.filter(age_category='91_plus').count()
+        
+        chart_data = []
+        for item in stock_aging_data:
+            chart_data.append({
+                'id': item['stock_ref'],  # STK1, STK2, etc.
+                'less_than_30': item['less_than_30_days'],
+                '30_to_60': item['30_to_60_days'],
+                '60_to_90': item['60_to_90_days'],
+                '91_plus': item['91_plus_days']
             })
         
-        return Response(formatted_data)
+        return Response({
+            'chart_data': chart_data,
+            'available_brands': list(filter(None, available_brands)),  # Remove empty brand names
+            'available_models': list(filter(None, available_models)),  # Remove empty model names
+            'summary': {
+                'less_than_30_days': total_less_than_30,
+                '30_to_60_days': total_30_to_60,
+                '60_to_90_days': total_60_to_90,
+                '91_plus_days': total_91_plus,
+                'total': products.count()
+            }
+        })
 
 
 class MarketComparisonAPIView(APIView):
