@@ -10,7 +10,8 @@ class CategorySerializer(serializers.ModelSerializer):
 class ProductSerializer(serializers.ModelSerializer):
     # days_in_inventory = serializers.ReadOnlyField()
     is_sold = serializers.ReadOnlyField()
-    profit = serializers.ReadOnlyField()
+    profit = serializers.SerializerMethodField()
+    profit_margin = serializers.SerializerMethodField()
     category_name = serializers.SerializerMethodField()
     date_purchased = serializers.DateTimeField(format="%Y-%m-%d")
     date_sold = serializers.DateTimeField(format="%Y-%m-%d", required=False, allow_null=True)
@@ -40,6 +41,38 @@ class ProductSerializer(serializers.ModelSerializer):
         end_date = obj.date_sold or timezone.now()
 
         return (end_date - start_date).days
+    
+    def get_profit(self, obj):
+        if not obj.is_sold or not obj.sold_price:
+            return 0
+            
+        total_cost = obj.buying_price or 0
+        total_cost += obj.shipping_price or 0
+        total_cost += obj.repair_cost or 0
+        total_cost += obj.fees or 0
+        total_cost += obj.commission or 0
+        
+        profit = obj.sold_price - total_cost
+        
+        return round(profit, 2)
+    
+    def get_profit_margin(self, obj):
+        if not obj.is_sold or not obj.sold_price or not obj.buying_price:
+            return 0
+            
+        total_cost = obj.buying_price or 0
+        total_cost += obj.shipping_price or 0
+        total_cost += obj.repair_cost or 0
+        total_cost += obj.fees or 0
+        total_cost += obj.commission or 0
+        
+        if total_cost == 0:
+            return 0
+            
+        profit = obj.sold_price - total_cost
+        profit_margin = (profit / total_cost) * 100
+        
+        return round(profit_margin, 2)
     
 class ProductCreateSerializer(serializers.ModelSerializer):
     date_purchased = serializers.DateTimeField(
