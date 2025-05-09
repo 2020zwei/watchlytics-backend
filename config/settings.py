@@ -61,6 +61,7 @@ PROJECTAPPS = [
     'subscription',
     'invoices',
     'shipping',
+    'report',
 ]
 
 INSTALLED_APPS += PROJECTAPPS
