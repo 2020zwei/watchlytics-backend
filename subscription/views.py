@@ -94,7 +94,7 @@ class StripePayment(APIView):
                 subscription.plan = plan
                 subscription.stripe_subscription_id = None
                 subscription.start_date = timezone.now()
-                subscription.end_date = subscription.start_date + timedelta(days=30)
+                subscription.end_date = timezone.now() + timedelta(days=30)
                 subscription.status = 'active'
                 subscription.save()
                 
@@ -137,11 +137,12 @@ class StripePayment(APIView):
                 
             subscription.plan = new_plan
             subscription.status = 'active'
-            subscription.start_date = timezone.now()
+            current_date = timezone.now()
+            subscription.start_date = current_date
             if new_plan.name == 'PRO':
-                subscription.end_date = timezone.now() + timedelta(days=365)
+                subscription.end_date = current_date + timedelta(days=365)
             else:
-                subscription.end_date = timezone.now() + timedelta(days=30)
+                subscription.end_date = current_date + timedelta(days=30)
             subscription.save()
             
             return True
