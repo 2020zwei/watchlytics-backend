@@ -42,6 +42,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         condition = self.request.query_params.get('condition')
         buyer = self.request.query_params.get('buyer')
         seller = self.request.query_params.get('seller')
+        sort_by = self.request.query_params.get('sort_by', 'created_at')  # Default sort by created_at
+        sort_direction = self.request.query_params.get('sort_direction', 'desc')  # Default descending
         
         if brands:
             brand_queries = []
@@ -79,6 +81,13 @@ class ProductViewSet(viewsets.ModelViewSet):
         
         if seller:
             queryset = queryset.filter(purchased_from__icontains=seller)
+        
+        valid_sort_fields = ['id', 'created_at']
+        if sort_by in valid_sort_fields:
+            if sort_direction.lower() == 'desc':
+                queryset = queryset.order_by(f'-{sort_by}')
+            else:
+                queryset = queryset.order_by(sort_by)
         
         return queryset
     
