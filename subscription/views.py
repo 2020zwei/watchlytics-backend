@@ -75,14 +75,14 @@ class StripePayment(APIView):
         except Exception as e:
             raise CustomException({"message": str(e)})
 
-    def modify_subscription(self, user, new_plan_id):
+    def modify_subscription(self, user, new_price_id):
         try:
             subscription = Subscription.objects.filter(user=user, is_active=True).first()
             
             if not subscription:
                 raise CustomException("Subscription not found")
             
-            if new_plan_id == 'FREE' or new_plan_id.upper() == 'FREE':
+            if new_price_id == 'FREE' or new_price_id.upper() == 'FREE':
                 if subscription.stripe_subscription_id:
                     try:
                         stripe.Subscription.delete(subscription.stripe_subscription_id)
@@ -120,10 +120,29 @@ class StripePayment(APIView):
                 proration_behavior="always_invoice",
                 items=[{
                     "id": subscription_item_id,
-                    "price": new_plan_id
+                    "price": new_price_id
                 }],
-                metadata={"price_id": new_plan_id, "is_upgrade": True}
+                metadata={"price_id": new_price_id, "is_upgrade": True}
             )
+            
+            new_plan = None
+            plans = Plan.objects.all()
+            for plan in plans:
+                if plan.stripe_price_id == new_price_id:
+                    new_plan = plan
+                    break
+                    
+            if not new_plan:
+                raise CustomException(f"No plan found for price ID: {new_price_id}")
+                
+            subscription.plan = new_plan
+            subscription.status = 'active'
+            subscription.start_date = timezone.now()
+            if new_plan.name == 'PRO':
+                subscription.end_date = timezone.now() + timedelta(days=365)
+            else:
+                subscription.end_date = timezone.now() + timedelta(days=30)
+            subscription.save()
             
             return True
         except Exception as e:
@@ -227,10 +246,16 @@ class StripePayment(APIView):
 
             existing_subscription = Subscription.objects.filter(user=user).first()
             
-            if existing_subscription and existing_subscription.is_active and existing_subscription.plan.name == plan_name:
-                message = f"You are already using {plan_name} plan. Please cancel it or upgrade to a different plan."
-                response = {'success': False, 'message': message, 'is_duplicate': True}
-                return Response(response, status.HTTP_400_BAD_REQUEST)
+            if existing_subscription and existing_subscription.is_active:
+                if existing_subscription.plan.name.upper() == plan_name.upper():
+                    message = f"You already have an active {plan_name} plan subscription."
+                    response = {'success': False, 'message': message, 'is_duplicate': True}
+                    return Response(response, status.HTTP_400_BAD_REQUEST)
+                
+                if hasattr(existing_subscription.plan, 'stripe_price_id') and existing_subscription.plan.stripe_price_id == price_id:
+                    message = f"You are already subscribed to this plan. Please choose a different plan to upgrade or downgrade."
+                    response = {'success': False, 'message': message, 'is_duplicate': True}
+                    return Response(response, status.HTTP_400_BAD_REQUEST)
 
             # Validate required fields for paid plans
             required_fields = validate_stripe_fields(request.data)
