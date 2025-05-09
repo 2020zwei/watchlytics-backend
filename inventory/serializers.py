@@ -73,9 +73,10 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         fields = [
             'product_name', 'product_id', 'category',
             'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
-            'msrp', 'whole_price', 'website_price', 'profit_margin', 'year',
+            'msrp', 'whole_price', 'website_price', 'profit', 'profit_margin', 'year',
             'quantity', 'unit', 'date_purchased', 'hold_time', 'sold_price', 'source_of_sale',
-            'purchased_from', 'listed_on', 'image', 'availability', 'date_sold', 'serial_number',
+            'purchased_from', 'listed_on', 'image', 'availability', 
+            'sold_source', 'date_sold', 'serial_number',
         ]
     
     def validate_category(self, value):
