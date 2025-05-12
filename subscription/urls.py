@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
-from .views import StripePayment, StripeWebhook, GetSubscriptionDetails
+from .views import StripePayment, StripeWebhook, GetSubscriptionDetails, CardManagementAPIView, CardOperationsAPIView
 
 from . import views
 
@@ -15,5 +15,8 @@ urlpatterns = [
     
     path('webhook/stripe/', StripeWebhook.as_view(), name='stripe-webhook'),
     path('subscription/details/', GetSubscriptionDetails.as_view(), name='subscription-details'),
+    path('v1/cards/', CardManagementAPIView.as_view(), name='card-management'),
+    path('v1/cards/<int:card_id>/set_default/', CardOperationsAPIView.as_view(), name='set-default-card'),
+    path('v1/cards/<int:card_id>/', CardOperationsAPIView.as_view(), name='delete-card'),
 
 ]
