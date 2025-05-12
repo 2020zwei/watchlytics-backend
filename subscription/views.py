@@ -1,6 +1,6 @@
 from rest_framework import generics, permissions
 from .models import Plan, Subscription
-from .serializers import PlanSerializer, SubscriptionSerializer
+from .serializers import PlanSerializer, SubscriptionSerializer, UserCardSerializer
 import stripe
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
@@ -11,9 +11,9 @@ from django.utils import timezone
 from datetime import timedelta
 from auth_.utils import CustomException
 from .pagination import CustomPagination
-from subscription.stripe_pay import make_stripe_order_payment, validate_stripe_fields, get_user_subscriptions_by_status
+from subscription.stripe_pay import make_stripe_order_payment, validate_stripe_fields, get_user_subscriptions_by_status, add_payment_method_to_customer, get_payment_methods, set_default_payment_method, delete_payment_method
 from subscription.stripe_processor import StripeEventProcessor
-
+from .models import UserCard
 class PlanListAPIView(generics.ListAPIView):
     queryset = Plan.objects.all()
     serializer_class = PlanSerializer
@@ -140,7 +140,7 @@ class StripePayment(APIView):
             current_date = timezone.now()
             subscription.start_date = current_date
             if new_plan.name == 'PRO':
-                subscription.end_date = current_date + timedelta(days=365)
+                subscription.end_date = current_date + timedelta(days=30)
             else:
                 subscription.end_date = current_date + timedelta(days=30)
             subscription.save()
@@ -456,3 +456,116 @@ class GetSubscriptionDetails(APIView):
                 'message': f'Something went wrong: {str(e)}'
             }
             return Response(response, status.HTTP_400_BAD_REQUEST)
+        
+
+class CardManagementAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        payment_method_token = request.data.get('payment_method_token')
+        card_holder_name = request.data.get('card_holder_name')
+        
+        if not payment_method_token:
+            return Response({
+                'success': False, 
+                'message': 'Payment method token is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        result = add_payment_method_to_customer(request.user, payment_method_token)
+        
+        if not result.get('success', False):
+            return Response({
+                'success': False,
+                'message': result.get('message', 'Failed to add payment method'),
+                'card_declined': 'card_declined' in result.get('code', '')
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        card = UserCard.objects.create(
+            user=request.user,
+            stripe_payment_method_id=result['payment_method_id'],
+            card_brand=result['card_brand'],
+            last_four=result['last_four'],
+            exp_month=result['exp_month'],
+            exp_year=result['exp_year'],
+            is_default=result['is_default'],
+            card_holder_name=card_holder_name,
+        )
+        
+        serializer = UserCardSerializer(card)
+        
+        return Response({
+            'success': True,
+            'message': 'Payment method added successfully',
+            'card': serializer.data
+        }, status=status.HTTP_201_CREATED)
+    
+    def get(self, request):
+        cards = UserCard.objects.filter(user=request.user).order_by('-is_default', '-created_at')
+        serializer = UserCardSerializer(cards, many=True)
+        
+        return Response({
+            'success': True,
+            'cards': serializer.data
+        }, status=status.HTTP_200_OK)
+
+class CardOperationsAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request, card_id):
+        try:
+            card = UserCard.objects.get(id=card_id, user=request.user)
+        except UserCard.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Card not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+            
+        result = set_default_payment_method(request.user, card.stripe_payment_method_id)
+        
+        if not result.get('success', False):
+            return Response({
+                'success': False,
+                'message': result.get('message', 'Failed to set default payment method')
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        UserCard.objects.filter(user=request.user).update(is_default=False)
+        card.is_default = True
+        card.save()
+        
+        serializer = UserCardSerializer(card)
+        
+        return Response({
+            'success': True,
+            'message': 'Default payment method updated successfully',
+            'card': serializer.data
+        }, status=status.HTTP_200_OK)
+    
+    def delete(self, request, card_id):
+        try:
+            card = UserCard.objects.get(id=card_id, user=request.user)
+        except UserCard.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Card not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+            
+        result = delete_payment_method(request.user, card.stripe_payment_method_id)
+        
+        if not result.get('success', False):
+            return Response({
+                'success': False,
+                'message': result.get('message', 'Failed to delete payment method')
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if card.is_default:
+            next_card = UserCard.objects.filter(user=request.user).exclude(id=card.id).order_by('-created_at').first()
+            if next_card:
+                next_card.is_default = True
+                next_card.save()
+        
+        card.delete()
+        
+        return Response({
+            'success': True,
+            'message': 'Payment method deleted successfully'
+        }, status=status.HTTP_200_OK)

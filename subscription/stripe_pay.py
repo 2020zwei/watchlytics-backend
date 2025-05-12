@@ -202,3 +202,177 @@ def validate_stripe_fields(data):
             required_fields.append('payment_method_token')
             
     return all([data.get(field) for field in required_fields])
+
+def add_payment_method_to_customer(user, payment_method_token):
+    try:
+        if not user.stripe_customer_id:
+            customer = stripe.Customer.create(
+                email=user.email,
+                name=f"{user.first_name} {user.last_name}",
+                metadata={"user_id": str(user.id)}
+            )
+            user.stripe_customer_id = customer.id
+            user.save()
+        else:
+            customer = stripe.Customer.retrieve(user.stripe_customer_id)
+        
+        payment_method = stripe.PaymentMethod.attach(
+            payment_method_token,
+            customer=user.stripe_customer_id,
+        )
+        
+        card_data = payment_method.get('card', {})
+        
+        existing_methods = stripe.PaymentMethod.list(
+            customer=user.stripe_customer_id,
+            type="card",
+        )
+        
+        if len(existing_methods.data) == 1:
+            stripe.Customer.modify(
+                user.stripe_customer_id,
+                invoice_settings={
+                    "default_payment_method": payment_method.id
+                }
+            )
+            is_default = True
+        else:
+            is_default = False
+            
+        return {
+            "success": True,
+            "payment_method_id": payment_method.id,
+            "card_brand": card_data.get('brand', '').lower(),
+            "last_four": card_data.get('last4', ''),
+            "exp_month": card_data.get('exp_month', 0),
+            "exp_year": card_data.get('exp_year', 0),
+            "is_default": is_default
+        }
+            
+    except stripe.error.StripeError as e:
+        return {
+            "success": False,
+            "message": str(e),
+            "code": e.code
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"An error occurred: {str(e)}",
+            "code": "unknown_error"
+        }
+
+def get_payment_methods(user):
+    try:
+        if not user.stripe_customer_id:
+            return {"success": True, "payment_methods": []}
+            
+        payment_methods = stripe.PaymentMethod.list(
+            customer=user.stripe_customer_id,
+            type="card",
+        )
+        
+        customer = stripe.Customer.retrieve(user.stripe_customer_id)
+        default_payment_method = customer.get('invoice_settings', {}).get('default_payment_method')
+        
+        formatted_methods = []
+        for method in payment_methods.data:
+            card = method.get('card', {})
+            formatted_methods.append({
+                "id": method.id,
+                "card_brand": card.get('brand', '').lower(),
+                "last_four": card.get('last4', ''),
+                "exp_month": card.get('exp_month', 0),
+                "exp_year": card.get('exp_year', 0),
+                "is_default": method.id == default_payment_method
+            })
+            
+        return {
+            "success": True,
+            "payment_methods": formatted_methods
+        }
+            
+    except stripe.error.StripeError as e:
+        return {
+            "success": False,
+            "message": str(e),
+            "code": e.code
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"An error occurred: {str(e)}",
+            "code": "unknown_error"
+        }
+
+def set_default_payment_method(user, payment_method_id):
+    try:
+        if not user.stripe_customer_id:
+            return {"success": False, "message": "No customer account found"}
+            
+        stripe.Customer.modify(
+            user.stripe_customer_id,
+            invoice_settings={
+                "default_payment_method": payment_method_id
+            }
+        )
+            
+        return {
+            "success": True,
+            "message": "Default payment method updated successfully"
+        }
+            
+    except stripe.error.StripeError as e:
+        return {
+            "success": False,
+            "message": str(e),
+            "code": e.code
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"An error occurred: {str(e)}",
+            "code": "unknown_error"
+        }
+
+def delete_payment_method(user, payment_method_id):
+    try:
+        if not user.stripe_customer_id:
+            return {"success": False, "message": "No customer account found"}
+            
+        customer = stripe.Customer.retrieve(user.stripe_customer_id)
+        default_payment_method = customer.get('invoice_settings', {}).get('default_payment_method')
+        
+        stripe.PaymentMethod.detach(payment_method_id)
+        
+        if payment_method_id == default_payment_method:
+            payment_methods = stripe.PaymentMethod.list(
+                customer=user.stripe_customer_id,
+                type="card",
+            )
+            
+            if payment_methods.data:
+                stripe.Customer.modify(
+                    user.stripe_customer_id,
+                    invoice_settings={
+                        "default_payment_method": payment_methods.data[0].id
+                    }
+                )
+            
+        return {
+            "success": True,
+            "message": "Payment method deleted successfully"
+        }
+            
+    except stripe.error.StripeError as e:
+        return {
+            "success": False,
+            "message": str(e),
+            "code": e.code
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"An error occurred: {str(e)}",
+            "code": "unknown_error"
+        }
