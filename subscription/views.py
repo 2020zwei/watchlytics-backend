@@ -140,7 +140,7 @@ class StripePayment(APIView):
             current_date = timezone.now()
             subscription.start_date = current_date
             if new_plan.name == 'PRO':
-                subscription.end_date = current_date + timedelta(days=365)
+                subscription.end_date = current_date + timedelta(days=30)
             else:
                 subscription.end_date = current_date + timedelta(days=30)
             subscription.save()

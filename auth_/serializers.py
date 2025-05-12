@@ -157,6 +157,8 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         print("Update called with:", validated_data)
 
         instance = super().update(instance, validated_data)
+        if instance.check_password(password):
+            raise serializers.ValidationError({"password": "New password cannot be the same as the current password."})
 
         if password:
             instance.set_password(password)
