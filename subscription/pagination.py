@@ -5,9 +5,14 @@ class CustomPagination(PageNumberPagination):
     page_size = 10
 
     def get_paginated_response(self, data):
+        user = self.request.user
+        current_plan = ""
+        if hasattr(user, 'subscription') and user.subscription and hasattr(user.subscription, 'plan'):
+            current_plan = user.subscription.plan.name
         return Response({
             'count': self.page.paginator.count,
             'next': self.get_next_link(),
             'previous': self.get_previous_link(),
-            'plans': data
+            'current_plan': current_plan,
+            'plans': data,
         })
