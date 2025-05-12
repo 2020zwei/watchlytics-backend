@@ -463,6 +463,7 @@ class CardManagementAPIView(APIView):
     
     def post(self, request):
         payment_method_token = request.data.get('payment_method_token')
+        card_holder_name = request.data.get('card_holder_name')
         
         if not payment_method_token:
             return Response({
@@ -486,7 +487,8 @@ class CardManagementAPIView(APIView):
             last_four=result['last_four'],
             exp_month=result['exp_month'],
             exp_year=result['exp_year'],
-            is_default=result['is_default']
+            is_default=result['is_default'],
+            card_holder_name=card_holder_name,
         )
         
         serializer = UserCardSerializer(card)

@@ -201,6 +201,24 @@ class UpdateProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
+        password = request.data.get("password")
+        confirm_password = request.data.get("confirm_password")
+        if password != confirm_password:
+            return Response(
+                    {
+                        'password': ['Passwords do not match']
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        user = User.objects.get(id=request.user.id)
+
+        if password and user.check_password(password):
+            return Response(
+                {
+                    'password': ['New password cannot be the same as the current password']
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
         serializer = UserUpdateSerializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
