@@ -14,6 +14,11 @@ from .pagination import CustomPagination
 from subscription.stripe_pay import make_stripe_order_payment, validate_stripe_fields, get_user_subscriptions_by_status, add_payment_method_to_customer, get_payment_methods, set_default_payment_method, delete_payment_method
 from subscription.stripe_processor import StripeEventProcessor
 from .models import UserCard
+import logging
+from datetime import datetime
+import os
+logger = logging.getLogger(__name__)
+stripe.api_key = os.getenv('STRIPE_SECRET_KEY', '')
 class PlanListAPIView(generics.ListAPIView):
     queryset = Plan.objects.all()
     serializer_class = PlanSerializer
@@ -470,34 +475,127 @@ class CardManagementAPIView(APIView):
                 'success': False, 
                 'message': 'Payment method token is required'
             }, status=status.HTTP_400_BAD_REQUEST)
-            
-        result = add_payment_method_to_customer(request.user, payment_method_token)
         
-        if not result.get('success', False):
+        try:
+            payment_method = stripe.PaymentMethod.retrieve(payment_method_token)
+            
+            if not payment_method or payment_method.get('type') != 'card':
+                logger.error(f"Invalid payment method: {payment_method}")
+                return Response({
+                    'success': False,
+                    'message': 'Invalid payment method provided'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            card_data = payment_method.get('card', {})
+            exp_month = card_data.get('exp_month')
+            exp_year = card_data.get('exp_year')
+            
+            current_date = datetime.now()
+            if exp_year < current_date.year or (exp_year == current_date.year and exp_month < current_date.month):
+                return Response({
+                    'success': False,
+                    'message': 'Card is expired',
+                    'code': 'card_expired'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            customer_id = self._get_or_create_customer(request.user)
+            
+            try:
+                payment_method = stripe.PaymentMethod.attach(
+                    payment_method_token,
+                    customer=customer_id,
+                )
+                
+                intent = stripe.SetupIntent.create(
+                    customer=customer_id,
+                    payment_method=payment_method.id,
+                    confirm=True,
+                    usage='off_session'
+                )
+                
+                if intent.status != 'succeeded':
+                    stripe.PaymentMethod.detach(payment_method.id)
+                    
+                    logger.error(f"Setup intent failed: {intent.status}")
+                    return Response({
+                        'success': False,
+                        'message': f'Card validation failed: {intent.status}',
+                        'code': intent.status
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                stripe.Customer.modify(
+                    customer_id,
+                    invoice_settings={
+                        'default_payment_method': payment_method.id,
+                    }
+                )
+                
+                is_default = True
+                card = UserCard.objects.create(
+                    user=request.user,
+                    stripe_payment_method_id=payment_method.id,
+                    card_brand=card_data.get('brand', 'Unknown'),
+                    last_four=card_data.get('last4', '0000'),
+                    exp_month=exp_month,
+                    exp_year=exp_year,
+                    is_default=is_default,
+                    card_holder_name=card_holder_name,
+                )
+                
+                serializer = UserCardSerializer(card)
+                
+                return Response({
+                    'success': True,
+                    'message': 'Payment method added successfully',
+                    'card': serializer.data
+                }, status=status.HTTP_201_CREATED)
+                
+            except stripe.error.CardError as e:
+
+                error_code = e.error.code
+                error_message = e.error.message
+                
+                error_mapping = {
+                    'card_declined': 'Card was declined',
+                    'expired_card': 'Card is expired',
+                    'incorrect_cvc': 'Incorrect CVC code',
+                    'processing_error': 'Error processing card',
+                    'incorrect_number': 'Incorrect card number',
+                    'stolen_card': 'Card reported as stolen',
+                }
+                
+                # user_message = error_mapping.get(error_code, error_message)
+                user_message = error_message
+                logger.warning(f"Card error: {error_code} - {error_message}")
+                
+                return Response({
+                    'success': False,
+                    'message': user_message,
+                    'code': error_code
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            except stripe.error.InvalidRequestError as e:
+                logger.error(f"Stripe invalid request: {str(e)}")
+
+                return Response({
+                    'success': False,
+                    'message': 'Invalid card details provided',
+                    'code': 'invalid_request'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            except Exception as e:
+                logger.error(f"Unexpected error adding card: {str(e)}")
+                return Response({
+                    'success': False,
+                    'message': 'An unexpected error occurred',
+                    'code': 'server_error'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except Exception as e:
+            logger.error(f"Error processing payment method: {str(e)}")
             return Response({
                 'success': False,
-                'message': result.get('message', 'Failed to add payment method'),
-                'card_declined': 'card_declined' in result.get('code', '')
+                'message': 'Failed to process payment method'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        card = UserCard.objects.create(
-            user=request.user,
-            stripe_payment_method_id=result['payment_method_id'],
-            card_brand=result['card_brand'],
-            last_four=result['last_four'],
-            exp_month=result['exp_month'],
-            exp_year=result['exp_year'],
-            is_default=result['is_default'],
-            card_holder_name=card_holder_name,
-        )
-        
-        serializer = UserCardSerializer(card)
-        
-        return Response({
-            'success': True,
-            'message': 'Payment method added successfully',
-            'card': serializer.data
-        }, status=status.HTTP_201_CREATED)
     
     def get(self, request):
         cards = UserCard.objects.filter(user=request.user).order_by('-is_default', '-created_at')
@@ -507,6 +605,30 @@ class CardManagementAPIView(APIView):
             'success': True,
             'cards': serializer.data
         }, status=status.HTTP_200_OK)
+    
+    def _get_or_create_customer(self, user):
+        try:
+            if hasattr(user, 'profile') and user.profile.stripe_customer_id:
+                return user.profile.stripe_customer_id
+                
+            customer = stripe.Customer.create(
+                email=user.email,
+                name=f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or user.email,
+                metadata={
+                    'user_id': user.id
+                }
+            )
+            
+            if hasattr(user, 'profile'):
+                user.profile.stripe_customer_id = customer.id
+                user.profile.save()
+            
+            return customer.id
+            
+        except Exception as e:
+            logger.error(f"Error creating/retrieving customer: {str(e)}")
+            return "cus_placeholder"
+            
 
 class CardOperationsAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
