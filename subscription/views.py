@@ -585,19 +585,26 @@ class CardManagementAPIView(APIView):
                         'default_payment_method': payment_method.id,
                     }
                 )
-
-                is_default = True
+                result = add_payment_method_to_customer(request.user, payment_method_token)
+        
+                if not result.get('success', False):
+                    return Response({
+                        'success': False,
+                        'message': result.get('message', 'Failed to add payment method'),
+                        'card_declined': 'card_declined' in result.get('code', '')
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
                 card = UserCard.objects.create(
                     user=request.user,
-                    stripe_payment_method_id=payment_method.id,
-                    card_brand=card_data.brand,
-                    last_four=card_data.last4,
-                    exp_month=exp_month,
-                    exp_year=exp_year,
-                    is_default=is_default,
+                    stripe_payment_method_id=result['payment_method_id'],
+                    card_brand=result['card_brand'],
+                    last_four=result['last_four'],
+                    exp_month=result['exp_month'],
+                    exp_year=result['exp_year'],
+                    is_default=result['is_default'],
                     card_holder_name=card_holder_name,
                 )
-
+                               
                 serializer = UserCardSerializer(card)
                 return Response({
                     'success': True,
