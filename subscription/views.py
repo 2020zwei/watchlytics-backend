@@ -514,6 +514,9 @@ class CardManagementAPIView(APIView):
     def post(self, request):
         payment_method_token = request.data.get('payment_method_token')
         card_holder_name = request.data.get('card_holder_name')
+        print(f"===data============={request.data}=====================")
+        print(f"=====PID==========={payment_method_token}=====================")
+        print(f"====CHN============{card_holder_name}=====================")
 
         if not payment_method_token:
             return Response({
