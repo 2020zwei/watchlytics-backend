@@ -552,19 +552,7 @@ class CardManagementAPIView(APIView):
             customer_id = self._get_or_create_customer(request.user)
             
             if payment_method.customer:
-                if payment_method.customer != customer_id:
-                    return Response({
-                        'success': False,
-                        'message': 'This card is already attached to another account',
-                        'code': 'card_already_attached'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                else:
-                    logger.info(f"Payment method {payment_method.id} already attached to customer {customer_id}")
-            else:
-                payment_method = stripe.PaymentMethod.attach(
-                    payment_method.id,
-                    customer=customer_id,
-                )
+                add_payment_method_to_customer(request.user, payment_method_token)
 
             logger.info(f"Creating setup intent for payment method {payment_method.id}")
             intent = stripe.SetupIntent.create(
