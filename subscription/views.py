@@ -551,124 +551,113 @@ class CardManagementAPIView(APIView):
                 
             customer_id = self._get_or_create_customer(request.user)
             
-            try:
-                if payment_method.customer == customer_id:
-                    logger.info(f"Payment method already attached to customer {customer_id}")
+            if payment_method.customer:
+                if payment_method.customer != customer_id:
+                    return Response({
+                        'success': False,
+                        'message': 'This card is already attached to another account',
+                        'code': 'card_already_attached'
+                    }, status=status.HTTP_400_BAD_REQUEST)
                 else:
-                    payment_method = stripe.PaymentMethod.attach(
-                        payment_method.id,
-                        customer=customer_id,
-                    )
-
-                logger.info(f"Creating setup intent for payment method {payment_method.id}")
-                intent = stripe.SetupIntent.create(
+                    logger.info(f"Payment method {payment_method.id} already attached to customer {customer_id}")
+            else:
+                payment_method = stripe.PaymentMethod.attach(
+                    payment_method.id,
                     customer=customer_id,
-                    payment_method=payment_method.id,
-                    confirm=True,
-                    usage='off_session',
-                    automatic_payment_methods={
-                        "enabled": True,
-                        "allow_redirects": "never"
-                    }
                 )
-                if intent.status != 'succeeded':
-                    stripe.PaymentMethod.detach(payment_method.id)
-                    return Response({
-                        'success': False,
-                        'message': f'Card validation failed: {intent.status}',
-                        'code': intent.status
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                stripe.Customer.modify(
-                    customer_id,
-                    invoice_settings={
-                        'default_payment_method': payment_method.id,
-                    }
-                )
-                result = add_payment_method_to_customer(request.user, payment_method_token)
-        
-                if not result.get('success', False):
-                    return Response({
-                        'success': False,
-                        'message': result.get('message', 'Failed to add payment method'),
-                        'card_declined': 'card_declined' in result.get('code', '')
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                card = UserCard.objects.create(
-                    user=request.user,
-                    stripe_payment_method_id=result['payment_method_id'],
-                    card_brand=result['card_brand'],
-                    last_four=result['last_four'],
-                    exp_month=result['exp_month'],
-                    exp_year=result['exp_year'],
-                    is_default=result['is_default'],
-                    card_holder_name=card_holder_name,
-                )
-                               
-                serializer = UserCardSerializer(card)
-                return Response({
-                    'success': True,
-                    'message': 'Payment method added successfully',
-                    'card': serializer.data
-                }, status=status.HTTP_201_CREATED)
 
-            except stripe.error.CardError as e:
-                error_code = e.error.code
-                error_message = e.error.message
-                error_mapping = {
-                    'card_declined': 'Card was declined',
-                    'expired_card': 'Card is expired',
-                    'incorrect_cvc': 'Incorrect CVC code',
-                    'processing_error': 'Error processing card',
-                    'incorrect_number': 'Incorrect card number',
-                    'stolen_card': 'Card reported as stolen',
+            logger.info(f"Creating setup intent for payment method {payment_method.id}")
+            intent = stripe.SetupIntent.create(
+                customer=customer_id,
+                payment_method=payment_method.id,
+                confirm=True,
+                usage='off_session',
+                automatic_payment_methods={
+                    "enabled": True,
+                    "allow_redirects": "never"
                 }
-                user_message = error_message
-                # user_message = error_mapping.get(error_code, error_message)
-                logger.warning(f"Card error: {error_code} - {error_message}")
-                
-                return Response({
-                    'success': False,
-                    'message': user_message,
-                    'code': error_code
-                }, status=status.HTTP_400_BAD_REQUEST)
-                
-            except stripe.error.InvalidRequestError as e:
-                logger.error(f"Stripe invalid request: {str(e)}")
-                error_message = str(e)
-                if "already attached" in error_message:
-                    try:
-                        current_payment_method = stripe.PaymentMethod.retrieve(payment_method_token)
-                        if current_payment_method.customer and current_payment_method.customer != customer_id:
-                            return Response({
-                                'success': False,
-                                'message': 'This card is already attached to another account',
-                                'code': 'card_already_attached'
-                            }, status=status.HTTP_400_BAD_REQUEST)
-                    except Exception as pm_error:
-                        logger.error(f"Error retrieving payment method details: {str(pm_error)}")
+            )
 
+            if intent.status != 'succeeded':
+                stripe.PaymentMethod.detach(payment_method.id)
                 return Response({
                     'success': False,
-                    'message': 'Invalid card details provided ok ',
-                    'code': 'invalid_request'
+                    'message': f'Card validation failed: {intent.status}',
+                    'code': intent.status
                 }, status=status.HTTP_400_BAD_REQUEST)
-                
-            except Exception as e:
-                logger.error(f"Unexpected error adding card: {str(e)}")
+
+            if UserCard.objects.filter(
+                user=request.user,
+                last_four=card_data.last4,
+                exp_month=exp_month,
+                exp_year=exp_year,
+                card_brand=card_data.brand
+            ).exists():
                 return Response({
                     'success': False,
-                    'message': 'An unexpected error occurred',
-                    'code': 'server_error'
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    'message': 'This card already exists in your account.',
+                    'code': 'duplicate_card'
+                }, status=status.HTTP_400_BAD_REQUEST)
 
-        except Exception as e:
-            logger.error(f"Error processing payment method: {str(e)}")
+            stripe.Customer.modify(
+                customer_id,
+                invoice_settings={
+                    'default_payment_method': payment_method.id,
+                }
+            )
+
+            result = add_payment_method_to_customer(request.user, payment_method_token)
+
+            if not result.get('success', False):
+                return Response({
+                    'success': False,
+                    'message': result.get('message', 'Failed to add payment method'),
+                    'card_declined': 'card_declined' in result.get('code', '')
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            card = UserCard.objects.create(
+                user=request.user,
+                stripe_payment_method_id=result['payment_method_id'],
+                card_brand=result['card_brand'],
+                last_four=result['last_four'],
+                exp_month=result['exp_month'],
+                exp_year=result['exp_year'],
+                is_default=result['is_default'],
+                card_holder_name=card_holder_name,
+            )
+
+            serializer = UserCardSerializer(card)
+            return Response({
+                'success': True,
+                'message': 'Payment method added successfully',
+                'card': serializer.data
+            }, status=status.HTTP_201_CREATED)
+
+        except stripe.error.CardError as e:
+            error_code = e.error.code
+            error_message = e.error.message
+            logger.warning(f"Card error: {error_code} - {error_message}")
             return Response({
                 'success': False,
-                'message': 'Failed to process payment method',
-                'code': 'processing_failed'
+                'message': error_message,
+                'code': error_code
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        except stripe.error.InvalidRequestError as e:
+            logger.error(f"Stripe invalid request: {str(e)}")
+            return Response({
+                'success': False,
+                'message': 'Invalid card details provided',
+                'code': 'invalid_request'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            logger.error(f"Unexpected error adding card: {str(e)}")
+            return Response({
+                'success': False,
+                'message': 'An unexpected error occurred',
+                'code': 'server_error'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def get(self, request):
         cards = UserCard.objects.filter(user=request.user).order_by('-is_default', '-created_at')
@@ -683,10 +672,10 @@ class CardManagementAPIView(APIView):
         try:
             if hasattr(user, 'profile') and user.profile.stripe_customer_id:
                 try:
-                    customer = stripe.Customer.retrieve(user.profile.stripe_customer_id)
+                    stripe.Customer.retrieve(user.profile.stripe_customer_id)
                     return user.profile.stripe_customer_id
                 except stripe.error.InvalidRequestError:
-                    pass
+                    pass  # continue to create a new one
 
             customer = stripe.Customer.create(
                 email=user.email,
@@ -703,6 +692,7 @@ class CardManagementAPIView(APIView):
         except Exception as e:
             logger.error(f"Error creating/retrieving customer: {str(e)}")
             raise
+
 
             
 
