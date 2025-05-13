@@ -248,7 +248,13 @@ def add_payment_method_to_customer(user, payment_method_token):
             "exp_year": card_data.get('exp_year', 0),
             "is_default": is_default
         }
-            
+    except stripe.error.CardError as e:
+        return {
+            'success': False,
+            'message': str(e.user_message),
+            'code': e.code
+        }
+    
     except stripe.error.StripeError as e:
         return {
             "success": False,
