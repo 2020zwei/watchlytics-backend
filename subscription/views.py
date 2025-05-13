@@ -80,6 +80,37 @@ class StripePayment(APIView):
         except Exception as e:
             raise CustomException({"message": str(e)})
 
+    def create_or_update_user_card(self, user, payment_method_token):
+        try:
+            payment_method = stripe.PaymentMethod.retrieve(payment_method_token)
+            
+            existing_card = UserCard.objects.filter(
+                user=user, 
+                stripe_payment_method_id=payment_method_token
+            ).first()
+            
+            if existing_card:
+                existing_card.card_brand = payment_method.card.brand
+                existing_card.last_four = payment_method.card.last4
+                existing_card.exp_month = payment_method.card.exp_month
+                existing_card.exp_year = payment_method.card.exp_year
+                existing_card.save()
+                return existing_card
+            else:
+                card = UserCard.objects.create(
+                    user=user,
+                    stripe_payment_method_id=payment_method_token,
+                    card_brand=payment_method.card.brand,
+                    last_four=payment_method.card.last4,
+                    exp_month=payment_method.card.exp_month,
+                    exp_year=payment_method.card.exp_year,
+                    is_default=True
+                )
+                return card
+                
+        except Exception as e:
+            raise CustomException(f"Error processing payment card: {str(e)}")
+
     def modify_subscription(self, user, new_price_id):
         try:
             subscription = Subscription.objects.filter(user=user, is_active=True).first()
@@ -114,6 +145,10 @@ class StripePayment(APIView):
                 
                 # The regular subscription creation flow will handle the rest
                 return False
+                
+            user_card = UserCard.objects.filter(user=user, is_default=True).first()
+            if not user_card:
+                raise CustomException("No payment method found. Please add a payment method first.")
             
             # Regular paid plan modification
             stripe_subscription = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
@@ -263,6 +298,8 @@ class StripePayment(APIView):
                     response = {'success': False, 'message': message, 'is_duplicate': True}
                     return Response(response, status.HTTP_400_BAD_REQUEST)
 
+            payment_method_token = request.data.get('payment_method_token')
+            
             # Validate required fields for paid plans
             required_fields = validate_stripe_fields(request.data)
             if not required_fields:
@@ -274,6 +311,15 @@ class StripePayment(APIView):
                 message = "Plan not found."
                 response = {'success': False, 'message': message}
                 return Response(response, status.HTTP_400_BAD_REQUEST)
+
+            try:
+                user_card = self.create_or_update_user_card(user, payment_method_token)
+            except Exception as card_error:
+                return Response({
+                    'success': False,
+                    'message': f"Failed to process payment method: {str(card_error)}",
+                    'card_declined': 'card declined' in str(card_error).lower()
+                }, status.HTTP_400_BAD_REQUEST)
 
             # If user has an existing subscription, modify it
             if existing_subscription:
@@ -311,7 +357,7 @@ class StripePayment(APIView):
                 return Response(response, status=status.HTTP_400_BAD_REQUEST)
 
             payment_intent = make_stripe_order_payment({
-                'payment_method_token': request.data.get('payment_method_token'),
+                'payment_method_token': payment_method_token,
                 'price_id': price_id,
                 'user_id': str(request.user.id),
             })
@@ -376,7 +422,6 @@ class StripePayment(APIView):
                 'message': 'Unable to get the price id'
             }
             return Response(response, status.HTTP_400_BAD_REQUEST)
-
 
 class StripeWebhook(APIView):
     permission_classes = [AllowAny]
