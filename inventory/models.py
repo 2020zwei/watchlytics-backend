@@ -60,7 +60,7 @@ class Product(models.Model):
     condition = models.CharField(max_length=50, blank=True, null=True, choices=CONDITION_CHOICES, default='new')
     purchased_from = models.CharField(max_length=100, blank=True, null=True)
     sold_source = models.CharField(max_length=100, blank=True, null=True)
-    
+    is_sold = models.BooleanField(default=False)
     # Listing information
     listed_on = models.CharField(max_length=200, blank=True, null=True)
     
@@ -97,9 +97,9 @@ class Product(models.Model):
             return (timezone.now().date() - self.date_purchased.date()).days
         return (self.date_sold - self.date_purchased).days
     
-    @property
-    def is_sold(self):
-        return self.date_sold is not None
+    # @property
+    # def is_sold(self):
+    #     return self.date_sold is not None
     
     @property
     def calculated_profit(self):

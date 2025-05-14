@@ -137,6 +137,7 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                     product.quantity += old_item.quantity
                     
                     if product.is_sold and product.quantity > 0:
+                        product.is_sold = False
                         product.date_sold = None
                         
                 product.save()
