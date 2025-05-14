@@ -1,8 +1,9 @@
 from rest_framework import serializers
 from transactions.models import TransactionHistory, TransactionItem
-
 from inventory.models import Product
 from decimal import Decimal
+from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 # from customers.serializers import CustomerSerializer
 from inventory.serializers import ProductSerializer
 
@@ -63,6 +64,29 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
             'notes', 'sale_category', 'customer', 'transaction_items'
         ]
     
+    def validate(self, data):
+        transaction_type = data.get('transaction_type')
+        items_data = data.get('transaction_items', [])
+        
+        if not items_data:
+            raise ValidationError("Transaction must contain at least one item")
+        
+        if transaction_type == 'sale':
+            errors = []
+            for item_data in items_data:
+                product = item_data['product']
+                requested_quantity = item_data['quantity']
+                
+                product_name = getattr(product, 'model_name', str(product))
+                
+                if requested_quantity > product.quantity:
+                    errors.append(f"Not enough inventory for {product_name}. Available: {product.quantity}, Requested: {requested_quantity}")
+            
+            if errors:
+                raise ValidationError(errors[0] if len(errors) == 1 else errors)
+        
+        return data
+    
     def create(self, validated_data):
         items_data = validated_data.pop('transaction_items')
         user = self.context['request'].user
@@ -88,6 +112,11 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                 product.quantity += quantity
             elif transaction.transaction_type == 'sale':
                 product.quantity -= quantity
+                
+                if product.quantity == 0:
+                    product.is_sold = True
+                    product.date_sold = timezone.now()
+            
             product.save()
         
         return transaction
@@ -106,6 +135,10 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                     product.quantity -= old_item.quantity
                 elif instance.transaction_type == 'sale':
                     product.quantity += old_item.quantity
+                    
+                    if product.is_sold and product.quantity > 0:
+                        product.date_sold = None
+                        
                 product.save()
             
             instance.transaction_items.all().delete()
@@ -113,6 +146,10 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
             for item_data in items_data:
                 product = item_data['product']
                 quantity = item_data['quantity']
+                
+                if instance.transaction_type == 'sale' and quantity > product.quantity:
+                    product_name = getattr(product, 'model_name', str(product))
+                    raise ValidationError(f"Not enough inventory for {product_name}. Available: {product.quantity}, Requested: {quantity}")
                 
                 item_data['purchase_price'] = Decimal(str(item_data['purchase_price']))
                 item_data['sale_price'] = Decimal(str(item_data['sale_price']))
@@ -126,6 +163,16 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                     product.quantity += quantity
                 elif instance.transaction_type == 'sale':
                     product.quantity -= quantity
+                    
+                    if product.quantity == 0:
+                        product.is_sold = True
+                        product.date_sold = timezone.now()
+                
                 product.save()
         
         return instance
+    
+    def to_internal_value(self, data):
+        if 'transaction_type' in data:
+            self.context['transaction_type'] = data['transaction_type']
+        return super().to_internal_value(data)
