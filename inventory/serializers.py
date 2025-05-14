@@ -12,7 +12,7 @@ class ProductSerializer(serializers.ModelSerializer):
     is_sold = serializers.ReadOnlyField()
     profit = serializers.SerializerMethodField()
     profit_margin = serializers.SerializerMethodField()
-    category_name = serializers.SerializerMethodField()
+    brand = serializers.SerializerMethodField()
     date_purchased = serializers.DateTimeField(format="%Y-%m-%d")
     date_sold = serializers.DateTimeField(format="%Y-%m-%d", required=False, allow_null=True)
     hold_time = serializers.SerializerMethodField()
@@ -20,9 +20,9 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'id', 'owner', 'quantity', 'product_id', 'product_name', 'date_purchased', 'date_sold',
-            'hold_time', 'source_of_sale', 'category_name', 'category',
-            'buying_price',  'sold_price', 'whole_price','profit', 'profit_margin',
+            'id', 'owner', 'quantity', 'product_id', 'model_name', 'date_purchased', 'date_sold',
+            'hold_time', 'source_of_sale', 'brand', 'category',
+            'buying_price',  'sold_price', 'wholesale_price','profit', 'profit_margin',
             'shipping_price', 'repair_cost', 'fees', 'commission',
             'msrp', 'website_price', 'purchased_from', 'sold_source', 'listed_on',
             'image', 'is_sold', 'availability', 'condition',
@@ -104,9 +104,9 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'product_name', 'product_id', 'category',
+            'model_name', 'product_id', 'category',
             'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
-            'msrp', 'whole_price', 'website_price', 'profit', 'profit_margin', 'year',
+            'msrp', 'wholesale_price', 'website_price', 'profit', 'profit_margin', 'year',
             'quantity', 'unit', 'date_purchased', 'hold_time', 'sold_price', 'source_of_sale',
             'purchased_from', 'listed_on', 'image', 'availability', 
             'sold_source', 'date_sold', 'serial_number',
