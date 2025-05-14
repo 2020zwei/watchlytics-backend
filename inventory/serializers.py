@@ -30,7 +30,7 @@ class ProductSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at', 'updated_at', 'owner']
 
-    def get_category_name(self, obj):
+    def get_brand(self, obj):
         return obj.category.name if obj.category else None
     
     def get_hold_time(self, obj):
