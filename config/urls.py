@@ -54,7 +54,7 @@ urlpatterns = [
     path('api/v1/customers/', include('customers.urls')),
     path('api/v1/market-insights', include('market_insights.urls')),
     path('api/', include('subscription.urls')),
-    path('api/v1/invoices/', include('invoices.urls')),
+    path('api/v1/', include('invoices.urls')),
     path('api/v1/reports/', include('report.urls')),
     path('api/v1/shipping/', include('shipping.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
