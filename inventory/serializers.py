@@ -43,8 +43,8 @@ class ProductSerializer(serializers.ModelSerializer):
         return (end_date - start_date).days
     
     def get_profit(self, obj):
-        if not obj.is_sold or not obj.sold_price:
-            return 0
+        if not obj.sold_price:
+            return None
             
         total_cost = obj.buying_price or 0
         total_cost += obj.shipping_price or 0
@@ -57,8 +57,8 @@ class ProductSerializer(serializers.ModelSerializer):
         return round(profit, 2)
     
     def get_profit_margin(self, obj):
-        if not obj.is_sold or not obj.sold_price or not obj.buying_price:
-            return 0
+        if not obj.sold_price or not obj.buying_price:
+            return None
             
         total_cost = obj.buying_price or 0
         total_cost += obj.shipping_price or 0
@@ -67,7 +67,7 @@ class ProductSerializer(serializers.ModelSerializer):
         total_cost += obj.commission or 0
         
         if total_cost == 0:
-            return 0
+            return None
             
         profit = obj.sold_price - total_cost
         profit_margin = (profit / total_cost) * 100
