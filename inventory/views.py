@@ -52,7 +52,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 if brand_words:
                     product_filters = []
                     for word in brand_words:
-                        word_filter = Q(product_name__icontains=word) | Q(category__name__icontains=word)
+                        word_filter = Q(model_name__icontains=word) | Q(category__name__icontains=word)
                         product_filters.append(word_filter)
                     
                     if product_filters:
@@ -195,11 +195,11 @@ class ProductViewSet(viewsets.ModelViewSet):
             #     )
             
             # Standard deletion
-            product_name = product.product_name
+            model_name = product.model_name
             product.delete()
             
             return Response(
-                {"message": f"Product '{product_name}' successfully deleted"},
+                {"message": f"Product '{model_name}' successfully deleted"},
                 status=status.HTTP_204_NO_CONTENT
             )
         
@@ -396,7 +396,7 @@ class ProductCSVUploadAPIView(APIView):
 
                     product_data = {
                         'owner': user,
-                        'product_name': model_name or brand_name,
+                        'model_name': model_name or brand_name,
                         'product_id': product_id,
                         'serial_number': serial_number,
                         'category': category,
@@ -413,7 +413,7 @@ class ProductCSVUploadAPIView(APIView):
                         'purchased_from': normalized_row.get('Bought From') or '',
                         'sold_source': normalized_row.get('Payment Sent account') or '',
                         'listed_on': normalized_row.get('Delivery Content') or '',
-                        'whole_price': total_cost,
+                        'wholesale_price': total_cost,
                     }
 
                     if existing_product:

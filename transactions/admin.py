@@ -36,7 +36,7 @@ class TransactionHistoryAdmin(admin.ModelAdmin):
         items = obj.transaction_items.all()
         if not items:
             return "-"
-        items_list = [f"{item.product.product_name} (x{item.quantity})" for item in items[:3]]
+        items_list = [f"{item.product.model_name} (x{item.quantity})" for item in items[:3]]
         if len(items) > 3:
             items_list.append(f"and {len(items) - 3} more")
         return ", ".join(items_list)

@@ -12,7 +12,7 @@ class ProductSerializer(serializers.ModelSerializer):
     is_sold = serializers.ReadOnlyField()
     profit = serializers.SerializerMethodField()
     profit_margin = serializers.SerializerMethodField()
-    category_name = serializers.SerializerMethodField()
+    brand = serializers.SerializerMethodField()
     date_purchased = serializers.DateTimeField(format="%Y-%m-%d")
     date_sold = serializers.DateTimeField(format="%Y-%m-%d", required=False, allow_null=True)
     hold_time = serializers.SerializerMethodField()
@@ -20,9 +20,9 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'id', 'owner', 'quantity', 'product_id', 'product_name', 'date_purchased', 'date_sold',
-            'hold_time', 'source_of_sale', 'category_name', 'category',
-            'buying_price',  'sold_price', 'whole_price','profit', 'profit_margin',
+            'id', 'owner', 'quantity', 'product_id', 'model_name', 'date_purchased', 'date_sold',
+            'hold_time', 'source_of_sale', 'brand', 'category',
+            'buying_price',  'sold_price', 'wholesale_price','profit', 'profit_margin',
             'shipping_price', 'repair_cost', 'fees', 'commission',
             'msrp', 'website_price', 'purchased_from', 'sold_source', 'listed_on',
             'image', 'is_sold', 'availability', 'condition',
@@ -30,7 +30,7 @@ class ProductSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at', 'updated_at', 'owner']
 
-    def get_category_name(self, obj):
+    def get_brand(self, obj):
         return obj.category.name if obj.category else None
     
     def get_hold_time(self, obj):
@@ -43,8 +43,8 @@ class ProductSerializer(serializers.ModelSerializer):
         return (end_date - start_date).days
     
     def get_profit(self, obj):
-        if not obj.is_sold or not obj.sold_price:
-            return 0
+        if not obj.sold_price:
+            return None
             
         total_cost = obj.buying_price or 0
         total_cost += obj.shipping_price or 0
@@ -57,8 +57,8 @@ class ProductSerializer(serializers.ModelSerializer):
         return round(profit, 2)
     
     def get_profit_margin(self, obj):
-        if not obj.is_sold or not obj.sold_price or not obj.buying_price:
-            return 0
+        if not obj.sold_price or not obj.buying_price:
+            return None
             
         total_cost = obj.buying_price or 0
         total_cost += obj.shipping_price or 0
@@ -67,7 +67,7 @@ class ProductSerializer(serializers.ModelSerializer):
         total_cost += obj.commission or 0
         
         if total_cost == 0:
-            return 0
+            return None
             
         profit = obj.sold_price - total_cost
         profit_margin = (profit / total_cost) * 100
@@ -104,9 +104,9 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'product_name', 'product_id', 'category',
+            'model_name', 'product_id', 'category',
             'buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission',
-            'msrp', 'whole_price', 'website_price', 'profit', 'profit_margin', 'year',
+            'msrp', 'wholesale_price', 'website_price', 'profit', 'profit_margin', 'year',
             'quantity', 'unit', 'date_purchased', 'hold_time', 'sold_price', 'source_of_sale',
             'purchased_from', 'listed_on', 'image', 'availability', 
             'sold_source', 'date_sold', 'serial_number',

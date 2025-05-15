@@ -16,9 +16,9 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'id', 'product_id', 'product_name', 'category', 'category_name', 
+            'id', 'product_id', 'model_name', 'category', 'category_name', 
             'availability', 'buying_price', 'shipping_price', 'repair_cost',
-            'fees', 'commission', 'msrp', 'sold_price', 'whole_price', 
+            'fees', 'commission', 'msrp', 'sold_price', 'wholesale_price', 
             'website_price', 'profit_margin', 'profit', 'quantity', 'unit',
             'date_purchased', 'purchase_date', 'date_sold', 'hold_time',
             'source_of_sale', 'delivery_content', 'condition', 
@@ -39,7 +39,7 @@ class DashboardStatsSerializer(serializers.Serializer):
 
 
 class BestSellingProductSerializer(serializers.Serializer):
-    product_name = serializers.CharField()
+    model_name = serializers.CharField()
     product_id = serializers.CharField()
     category_name = serializers.CharField()
     quantity = serializers.IntegerField()
@@ -49,7 +49,7 @@ class BestSellingProductSerializer(serializers.Serializer):
 
 
 class RepairCostSerializer(serializers.Serializer):
-    product_name = serializers.CharField()
+    model_name = serializers.CharField()
     cost = serializers.DecimalField(max_digits=12, decimal_places=2)
 
 
@@ -68,7 +68,7 @@ class ExpenseReportSerializer(serializers.Serializer):
 
 
 class MarketComparisonSerializer(serializers.Serializer):
-    product_name = serializers.CharField()
+    model_name = serializers.CharField()
     msrp = serializers.DecimalField(max_digits=12, decimal_places=2)
     sold_price = serializers.DecimalField(max_digits=12, decimal_places=2)
     difference = serializers.DecimalField(max_digits=12, decimal_places=2)

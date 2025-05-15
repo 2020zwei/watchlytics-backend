@@ -124,8 +124,8 @@ class BestSellingProductsAPIView(APIView):
         best_selling = []
         for product in sold_products:
             # Relaxed condition - don't require category
-            if product.product_name or getattr(product, 'name', None):  # Handle possible field name variations
-                product_name = product.product_name or getattr(product, 'name', 'Unknown Product')
+            if product.model_name or getattr(product, 'name', None):  # Handle possible field name variations
+                model_name = product.model_name or getattr(product, 'name', 'Unknown Product')
                 product_id = product.product_id or getattr(product, 'id', 'Unknown ID')
                 
                 # Calculate remaining quantity for this product_id
@@ -137,8 +137,8 @@ class BestSellingProductsAPIView(APIView):
                 # Filter by product_id if available
                 if product_id and product_id != 'Unknown ID':
                     remaining_query = remaining_query.filter(product_id=product_id)
-                elif product_name and product_name != 'Unknown Product':
-                    remaining_query = remaining_query.filter(product_name=product_name)
+                elif model_name and model_name != 'Unknown Product':
+                    remaining_query = remaining_query.filter(model_name=model_name)
                     
                 remaining_quantity = remaining_query.aggregate(
                     remaining=Coalesce(Sum('quantity'), 0, output_field=IntegerField())
@@ -161,7 +161,7 @@ class BestSellingProductsAPIView(APIView):
                 
                 # Build product data dictionary matching UI format
                 product_data = {
-                    'product': product_name,
+                    'product': model_name,
                     'reference_number': product_id,
                     'brand': category_name,
                     'remaining_quantity': remaining_quantity,
@@ -202,14 +202,14 @@ class ExpenseReportAPIView(APIView):
 
         all_products = Product.objects.filter(owner=user)
         product_expenses = []
-        unique_products = all_products.values('product_name').distinct()
+        unique_products = all_products.values('model_name').distinct()
 
         for product_item in unique_products:
-            product_name = product_item['product_name']
-            if not product_name:
+            model_name = product_item['model_name']
+            if not model_name:
                 continue
 
-            product_data = all_products.filter(product_name=product_name)
+            product_data = all_products.filter(model_name=model_name)
 
             first_product = product_data.first()
             if not first_product:
@@ -230,7 +230,7 @@ class ExpenseReportAPIView(APIView):
             impact = ((repairs_cost + shipping_cost) / total_cost) * 100 if total_cost > 0 else 0
 
             product_expenses.append({
-                'product': product_name,
+                'product': model_name,
                 'reference_number': first_product.product_id,
                 'purchase_price': float(first_product.buying_price or 0),
                 'repairs': float(repairs_cost),
@@ -267,7 +267,7 @@ class StockAgingAPIView(APIView):
                 if brand_words:
                     product_filters = []
                     for word in brand_words:
-                        word_filter = Q(product_name__icontains=word) | Q(category__name__icontains=word)
+                        word_filter = Q(model_name__icontains=word) | Q(category__name__icontains=word)
                         product_filters.append(word_filter)
                     
                     if product_filters:
@@ -282,7 +282,7 @@ class StockAgingAPIView(APIView):
                     brand_filter |= query
                 queryset = queryset.filter(brand_filter)
         if model:
-            query = query.filter(product_name=model)
+            query = query.filter(model_name=model)
         
         # days_30_ago = today - timedelta(days=30)
         # days_60_ago = today - timedelta(days=60)
@@ -355,7 +355,7 @@ class StockAgingAPIView(APIView):
         available_models = Product.objects.filter(
             owner=user,
             availability='in_stock'
-        ).values_list('product_name', flat=True).distinct()
+        ).values_list('model_name', flat=True).distinct()
         
         total_less_than_30 = products.filter(age_category='less_than_30').count()
         total_30_to_60 = products.filter(age_category='30_to_60').count()
@@ -408,7 +408,7 @@ class MarketComparisonAPIView(APIView):
                 output_field=DecimalField(max_digits=10, decimal_places=2)
             )
         ).values(
-            'product_name',
+            'model_name',
             'msrp',
             'sold_price',
             'difference',
@@ -420,7 +420,7 @@ class MarketComparisonAPIView(APIView):
         
         for item in market_comparison:
             formatted_data.append({
-                'product': item['product_name'],
+                'product': item['model_name'],
                 'msrp_price': float(item['msrp']),
                 'sold_price': float(item['sold_price']),
                 'difference': float(item['difference']),

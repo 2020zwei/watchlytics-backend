@@ -56,22 +56,22 @@ class ProductStockAgeListFilter(admin.SimpleListFilter):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('product_id', 'product_name', 'owner_display', 'category', 'buying_price', 
+    list_display = ('product_id', 'model_name', 'owner_display', 'category', 'buying_price', 
                    'sold_price', 'profit_display', 'quantity', 'date_purchased', 
                    'date_sold', 'is_sold_display', 'days_in_inventory_display')
     
     list_filter = ('category', 'availability', ProductStockAgeListFilter, 'owner')
-    search_fields = ('product_name', 'product_id', 'owner__first_name', 'purchased_from', 'sold_source')
+    search_fields = ('model_name', 'product_id', 'owner__first_name', 'purchased_from', 'sold_source')
     readonly_fields = ('created_at', 'updated_at', 'calculated_profit', 'days_in_inventory')
     date_hierarchy = 'date_purchased'
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('owner', 'product_name', 'product_id', 'category', 'availability', 'quantity', 'unit')
+            'fields': ('owner', 'model_name', 'product_id', 'category', 'availability', 'quantity', 'unit')
         }),
         ('Financial Information', {
             'fields': ('buying_price', 'shipping_price', 'repair_cost', 'fees', 'commission', 
-                      'msrp', 'sold_price', 'whole_price', 'website_price', 'profit_margin', 'calculated_profit')
+                      'msrp', 'sold_price', 'wholesale_price', 'website_price', 'profit_margin', 'calculated_profit')
         }),
         ('Dates', {
             'fields': ('date_purchased', 'date_sold', 'hold_time', 'days_in_inventory')
