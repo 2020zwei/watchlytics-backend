@@ -115,6 +115,7 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                 
                 if product.quantity == 0:
                     product.is_sold = True
+                    product.availability = "sold"
                     product.date_sold = timezone.now()
             
             product.save()
@@ -138,6 +139,7 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                     
                     if product.is_sold and product.quantity > 0:
                         product.is_sold = False
+                        product.availability = "in_stock"
                         product.date_sold = None
                         
                 product.save()
@@ -167,6 +169,7 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                     
                     if product.quantity == 0:
                         product.is_sold = True
+                        product.availability = "sold"
                         product.date_sold = timezone.now()
                 
                 product.save()
