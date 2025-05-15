@@ -2,6 +2,7 @@ from django.db import models
 from django.utils import timezone
 from auth_.models import User
 from datetime import datetime
+from django.core.validators import MinValueValidator
 
 def product_image_path(instance, filename):
     return f'products/{instance.id}/{filename}'
@@ -46,7 +47,7 @@ class Product(models.Model):
     profit = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     
     # Quantity and unit
-    quantity = models.IntegerField(default=1)
+    quantity = models.IntegerField(default=1, validators=[MinValueValidator(1)])
     unit = models.CharField(max_length=50, blank=True, null=True)
     
     # Dates
@@ -80,7 +81,7 @@ class Product(models.Model):
         null=False
     )
     class Meta:
-        unique_together = (('owner', 'product_id'), ('owner', 'serial_number'))
+        unique_together = (('owner', 'product_id'))
     
     def __str__(self):
         return f"{self.model_name} ({self.product_id})"

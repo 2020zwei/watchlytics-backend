@@ -187,14 +187,6 @@ class ProductViewSet(viewsets.ModelViewSet):
     def delete_product(self, request, pk=None):
         try:
             product = self.get_object()
-            
-            # if product.orders.exists():
-            #     return Response(
-            #         {"error": "Cannot delete product that is referenced by orders"},
-            #         status=status.HTTP_400_BAD_REQUEST
-            #     )
-            
-            # Standard deletion
             model_name = product.model_name
             product.delete()
             
