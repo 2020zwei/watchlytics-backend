@@ -12,6 +12,7 @@ from transactions.models import TransactionHistory
 from datetime import timedelta
 from rest_framework.views import APIView
 from django.db.models import Sum, Count, Q, F
+from django.db.models import Q, Case, When, Value, IntegerField
 from .pagination import CustomPagination
 import csv
 import openpyxl
@@ -44,6 +45,10 @@ class ProductViewSet(viewsets.ModelViewSet):
         seller = self.request.query_params.get('seller')
         sort_by = self.request.query_params.get('sort_by', 'created_at')  # Default sort by created_at
         sort_direction = self.request.query_params.get('sort_direction', 'desc')  # Default descending
+        is_transaction = self.request.query_params.get('is_transaction')
+        
+        if is_transaction:
+            queryset = queryset.filter(quantity__gt=0)
         
         if brands:
             brand_queries = []
@@ -85,9 +90,29 @@ class ProductViewSet(viewsets.ModelViewSet):
         valid_sort_fields = ['id', 'created_at']
         if sort_by in valid_sort_fields:
             if sort_direction.lower() == 'desc':
-                queryset = queryset.order_by(f'-{sort_by}')
+                queryset = queryset.annotate(
+                    zero_quantity=Case(
+                        When(quantity=0, then=Value(1)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    )
+                ).order_by('zero_quantity', f'-{sort_by}')
             else:
-                queryset = queryset.order_by(sort_by)
+                queryset = queryset.annotate(
+                    zero_quantity=Case(
+                        When(quantity=0, then=Value(1)),
+                        default=Value(0),
+                        output_field=IntegerField()
+                    )
+                ).order_by('zero_quantity', sort_by)
+        else:
+            queryset = queryset.annotate(
+                zero_quantity=Case(
+                    When(quantity=0, then=Value(1)),
+                    default=Value(0),
+                    output_field=IntegerField()
+                )
+            ).order_by('zero_quantity', '-created_at')
         
         return queryset
     
