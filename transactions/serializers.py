@@ -4,7 +4,7 @@ from inventory.models import Product
 from decimal import Decimal
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
-# from customers.serializers import CustomerSerializer
+from customers.serializers import CustomerSerializer
 from inventory.serializers import ProductSerializer
 
 class TransactionItemSerializer(serializers.ModelSerializer):
@@ -25,7 +25,7 @@ class TransactionItemCreateSerializer(serializers.ModelSerializer):
 
 class TransactionHistorySerializer(serializers.ModelSerializer):
     items = TransactionItemSerializer(source='transaction_items', many=True, read_only=True)
-    # customer_details = CustomerSerializer(source='customer', read_only=True)
+    customer_details = CustomerSerializer(source='customer', read_only=True)
     profit = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     total_purchase_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     total_sale_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
@@ -35,7 +35,7 @@ class TransactionHistorySerializer(serializers.ModelSerializer):
         model = TransactionHistory
         fields = [
             'id', 'user', 'name_of_trade', 'transaction_type', 'date', 'purchase_price', 'sale_price',
-            'notes', 'sale_category', 'customer',
+            'notes', 'sale_category', 'customer', 'customer_details',
             'created_at', 'updated_at', 'items', 'profit', 'total_purchase_price', 'total_sale_price'
         ]
         read_only_fields = ['user', 'profit', 'total_purchase_price', 'total_sale_price']

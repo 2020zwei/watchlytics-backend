@@ -1,6 +1,14 @@
 from django.db import models
 from auth_.models import User
 
+
+class CustomerManager(models.Manager):
+    def active(self):
+        return self.filter(status=True)
+
+    def inactive(self):
+        return self.filter(status=False)
+    
 class Customer(models.Model):
     """Customer information for CRM"""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='customers')
@@ -11,10 +19,9 @@ class Customer(models.Model):
     notes = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+    status = models.BooleanField(default=True)
     def __str__(self):
         return self.name
-
 class Interaction(models.Model):
     """Customer interaction logging"""
     INTERACTION_TYPE_CHOICES = (
