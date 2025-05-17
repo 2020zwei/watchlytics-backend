@@ -15,6 +15,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import chromedriver_autoinstaller
+from webdriver_manager.chrome import ChromeDriverManager
 
 
 
@@ -145,20 +146,25 @@ class Command(BaseCommand):
             List of watch dictionaries
         """
         # Setup Chrome with anti-detection measures
+        # ✅ Generate a unique user-data-dir to avoid reuse conflicts
+        unique_dir = os.path.join(tempfile.gettempdir(), f"chrome_profile_{uuid.uuid4().hex}")
         options = Options()
-        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
+
+        options.add_argument(f"--user-data-dir={unique_dir}")
+
+        # ✅ Proper user agent spoofing
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.91 Safari/537.36")
+
+        # Anti-detection and stability flags
         options.add_argument("--disable-blink-features=AutomationControlled")
-        # options.add_argument("--headless")
+        # options.add_argument("--headless=new")  # Uncomment if needed
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
-        
-        # Create a unique user data directory with UUID to ensure it's not already in use
-        unique_dir = os.path.join(tempfile.gettempdir(), f"chrome_profile_{uuid.uuid4().hex}")
-        options.add_argument(f"--user-data-dir={unique_dir}")
-        
-        driver = webdriver.Chrome(options=options)
+
+        # ✅ Only add user-data-dir once (you were adding it twice before)
+        driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
         
         # Mask WebDriver
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
