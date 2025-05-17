@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 import tempfile
 import uuid
+import shutil
 from django.core.management.base import BaseCommand
 from market_insights.models import MarketData
 from selenium import webdriver
@@ -151,18 +152,22 @@ class Command(BaseCommand):
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
         
-        # Create a unique user data directory with UUID to ensure it's not already in use
-        unique_dir = os.path.join(tempfile.gettempdir(), f"chrome_profile_{uuid.uuid4().hex}")
-        options.add_argument(f"--user-data-dir={unique_dir}")
+        # Create a unique user data directory with timestamp to ensure it's not already in use
+        # Use a dedicated directory instead of tempfile's default location
+        chrome_data_dir = os.path.join('/tmp', f"chrome_profile_{uuid.uuid4().hex}_{int(time.time())}")
+        os.makedirs(chrome_data_dir, exist_ok=True)
+        self.stdout.write(f"Created Chrome user data directory: {chrome_data_dir}")
+        options.add_argument(f"--user-data-dir={chrome_data_dir}")
         
-        driver = webdriver.Chrome(options=options)
-        
-        # Mask WebDriver
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
+        driver = None
         watches_data = []
         
         try:
+            driver = webdriver.Chrome(options=options)
+            
+            # Mask WebDriver
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
             # Load the page with filter for popular brands
             url = 'https://grailzee.com/pages/completed-auctions?makes=rolex%2Comega%2Cbreitling%2Ctudor%2Cpanerai%2Ctag-heuer%2Chublot%2Ccartier%2Caudemars-piguet%2Cpatek-philippe%2Cfranck-muller%2Cglashutte&sort=1'
             driver.get(url)
@@ -411,9 +416,24 @@ class Command(BaseCommand):
             
             return watches_data
         
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f"Error during scraping: {str(e)}"))
+            return []
         finally:
-            # Close the browser
-            driver.quit()
+            # Clean up resources
+            if driver:
+                try:
+                    driver.quit()
+                except Exception as e:
+                    self.stdout.write(self.style.WARNING(f"Error closing driver: {str(e)}"))
+            
+            # Clean up the Chrome user data directory
+            try:
+                if os.path.exists(chrome_data_dir):
+                    self.stdout.write(f"Cleaning up Chrome user data directory: {chrome_data_dir}")
+                    shutil.rmtree(chrome_data_dir, ignore_errors=True)
+            except Exception as e:
+                self.stdout.write(self.style.WARNING(f"Error cleaning up Chrome user data directory: {str(e)}"))
 
     def handle(self, *args, **options):
         self.stdout.write(self.style.SUCCESS('Starting Grailzee watch data extraction...'))
@@ -424,6 +444,10 @@ class Command(BaseCommand):
             # Scrape data from Grailzee
             watches = self.scrape_grailzee_watches(max_items=max_items)
             self.stdout.write(self.style.SUCCESS(f"Successfully scraped {len(watches)} watches"))
+            
+            if not watches:
+                self.stdout.write(self.style.ERROR("No watches were scraped. Exiting."))
+                return
             
             # Count items with images
             items_with_images = sum(1 for watch in watches if watch.get('image_url'))
