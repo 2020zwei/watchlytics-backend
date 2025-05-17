@@ -15,14 +15,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from bs4 import BeautifulSoup
-import chromedriver_autoinstaller
 from webdriver_manager.chrome import ChromeDriverManager
-
 
 
 class Command(BaseCommand):
     help = 'Scrapes watch data from Grailzee.com and saves to MarketData model'
-    chromedriver_autoinstaller.install()
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -147,19 +144,22 @@ class Command(BaseCommand):
             List of watch dictionaries
         """
         # Setup Chrome with anti-detection measures
-        # ✅ Generate a unique user-data-dir to avoid reuse conflicts
-        options = Options()
-
+        options = webdriver.ChromeOptions()
+        
+        # Create a temporary unique user profile directory
         unique_dir = os.path.join(tempfile.gettempdir(), f"chrome_profile_{uuid.uuid4().hex}")
         options.add_argument(f"--user-data-dir={unique_dir}")
+        
+        # Add anti-detection measures
         options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.91 Safari/537.36")
         options.add_argument("--disable-blink-features=AutomationControlled")
-        # options.add_argument("--headless=new")  # Uncomment if needed
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
-
+        
+        # Use webdriver_manager to automatically download and use the correct ChromeDriver
+        # This is the most reliable way to get the proper driver
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         
