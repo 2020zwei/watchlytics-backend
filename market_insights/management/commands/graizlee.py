@@ -6,13 +6,10 @@ from datetime import datetime
 from decimal import Decimal
 import tempfile
 import uuid
-import shutil
-import subprocess
 from django.core.management.base import BaseCommand
 from market_insights.models import MarketData
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -31,7 +28,15 @@ class Command(BaseCommand):
         )
 
     def extract_reference_number(self, model_text):
-        """Extract reference number from model text using multiple patterns"""
+        """
+        Extract reference number from model text using multiple patterns
+        
+        Args:
+            model_text: The model text string to extract from
+        
+        Returns:
+            Reference number string or None
+        """
         if not model_text:
             return None
             
@@ -62,7 +67,15 @@ class Command(BaseCommand):
         return None
 
     def check_and_close_popup(self, driver):
-        """Check for popups and close them"""
+        """
+        Check for popups and close them
+        
+        Args:
+            driver: Selenium WebDriver instance
+        
+        Returns:
+            Boolean indicating if a popup was closed
+        """
         try:
             # Look for common popup elements - adjust these selectors as needed
             popup_selectors = [
@@ -87,7 +100,7 @@ class Command(BaseCommand):
                         if button.is_displayed():
                             button.click()
                             self.stdout.write("Closed popup")
-                            time.sleep(1.5)
+                            time.sleep(1.5)  # Wait longer for popup to close
                             return True
             
             # Try clicking on the document body to dismiss popups
@@ -117,78 +130,63 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR(f"Error handling popup: {str(e)}"))
             return False
 
-    def kill_chrome_processes(self):
-        """Kill any existing Chrome processes"""
-        try:
-            self.stdout.write("Attempting to kill existing Chrome processes...")
-            # Find Chrome processes on Linux
-            subprocess.run(["pkill", "-f", "chrome"], check=False)
-            subprocess.run(["pkill", "-f", "chromedriver"], check=False)
-            time.sleep(1)  # Give a moment for processes to terminate
-            self.stdout.write("Chrome processes terminated")
-        except Exception as e:
-            self.stdout.write(self.style.WARNING(f"Error killing Chrome processes: {str(e)}"))
-
     def scrape_grailzee_watches(self, max_items=200, initial_scroll_pause=4):
-        """Scrape watches from Grailzee.com with improved infinite scroll handling"""
-        # First, make sure any existing Chrome processes are killed
-        self.kill_chrome_processes()
+        """
+        Scrape watches from Grailzee.com with improved infinite scroll handling
         
+        Args:
+            max_items: Maximum number of items to scrape
+            initial_scroll_pause: Initial time to pause between scrolls in seconds
+        
+        Returns:
+            List of watch dictionaries
+        """
         # Setup Chrome with anti-detection measures
         options = Options()
         options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
         options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--headless=new")  # Using newer headless mode
+        # options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")  # Helpful in some cases
-        options.add_argument("--disable-extensions")
-        options.add_argument("--remote-debugging-port=9222")  # Add a debugging port
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
         
-        driver = None
+        # Create a unique user data directory with UUID to ensure it's not already in use
+        unique_dir = os.path.join(tempfile.gettempdir(), f"chrome_profile_{uuid.uuid4().hex}")
+        options.add_argument(f"--user-data-dir={unique_dir}")
+        
+        driver = webdriver.Chrome(options=options)
+        
+        # Mask WebDriver
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
         watches_data = []
         
         try:
-            service = Service()
-            self.stdout.write("Creating Chrome driver...")
-            driver = webdriver.Chrome(service=service, options=options)
-            
-            # Mask WebDriver
-            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            
-            # Add explicit page load timeout and implicit wait
-            driver.set_page_load_timeout(60)
-            driver.implicitly_wait(10)
-            
             # Load the page with filter for popular brands
             url = 'https://grailzee.com/pages/completed-auctions?makes=rolex%2Comega%2Cbreitling%2Ctudor%2Cpanerai%2Ctag-heuer%2Chublot%2Ccartier%2Caudemars-piguet%2Cpatek-philippe%2Cfranck-muller%2Cglashutte&sort=1'
-            self.stdout.write(f"Loading URL: {url}")
             driver.get(url)
+            self.stdout.write(f"Loading URL: {url}")
             
             # Wait for page to load completely
-            time.sleep(7)
+            time.sleep(7)  # Increased initial wait time
             
             # Handle cookie consent if it appears
             try:
                 cookie_buttons = driver.find_elements(By.XPATH, "//button[contains(@class, 'cookie') or contains(text(), 'Accept')]")
                 if cookie_buttons:
-                    for button in cookie_buttons:
-                        if button.is_displayed():
-                            button.click()
-                            self.stdout.write("Clicked cookie consent button")
-                            time.sleep(3)
-                            break
+                    cookie_buttons[0].click()
+                    self.stdout.write("Clicked cookie consent button")
+                    time.sleep(3)  # Wait longer after clicking cookie consent
             except Exception as e:
                 self.stdout.write(self.style.WARNING(f"Cookie handling error: {str(e)}"))
             
             # Variables for scroll tracking
             scroll_attempts = 0
-            max_scroll_attempts = 150
+            max_scroll_attempts = 150  # Increased max attempts
             previous_item_count = 0
             no_new_items_count = 0
-            scroll_pause_time = initial_scroll_pause
+            scroll_pause_time = initial_scroll_pause  # Start with initial pause time
             
             # Get window height for incremental scrolling
             window_height = driver.execute_script("return window.innerHeight")
@@ -222,7 +220,7 @@ class Command(BaseCommand):
                                 if button.is_displayed():
                                     button.click()
                                     self.stdout.write("Clicked 'Load more' button")
-                                    time.sleep(3)
+                                    time.sleep(3)  # Longer wait after clicking Load More
                                     no_new_items_count = 0  # Reset counter since we took an action
                     except Exception as e:
                         self.stdout.write(self.style.WARNING(f"Error clicking load more: {str(e)}"))
@@ -231,16 +229,16 @@ class Command(BaseCommand):
                     if no_new_items_count == 2:
                         driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.7);")
                         self.stdout.write("Trying a partial scroll")
-                        time.sleep(scroll_pause_time * 1.5)
+                        time.sleep(scroll_pause_time * 1.5)  # Wait longer for partial scroll
                         
                         # Refresh scroll height
                         total_height = driver.execute_script("return document.body.scrollHeight")
                         
                     # Increase pause time if we're struggling to get new items
-                    scroll_pause_time = min(10, scroll_pause_time + 0.5)
+                    scroll_pause_time = min(10, scroll_pause_time + 0.5)  # Gradually increase up to 10 seconds
                     self.stdout.write(f"Increased scroll pause time to {scroll_pause_time}s")
                     
-                    if no_new_items_count >= 4:
+                    if no_new_items_count >= 4:  # More patience before giving up
                         self.stdout.write("No new items found after 4 scrolls. Stopping.")
                         break
                 else:
@@ -413,63 +411,19 @@ class Command(BaseCommand):
             
             return watches_data
         
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f"Error during scraping: {str(e)}"))
-            return []
         finally:
-            # Clean up resources
-            if driver:
-                try:
-                    driver.quit()
-                    self.stdout.write("Chrome driver quit successfully")
-                except Exception as e:
-                    self.stdout.write(self.style.WARNING(f"Error closing driver: {str(e)}"))
-                    
-                # Force kill any remaining Chrome processes for good measure
-                self.kill_chrome_processes()
+            # Close the browser
+            driver.quit()
 
     def handle(self, *args, **options):
-        # Create a lock file to prevent multiple instances from running
-        lock_file = '/tmp/grailzee_scraper.lock'
+        self.stdout.write(self.style.SUCCESS('Starting Grailzee watch data extraction...'))
         
-        # Check if lock file exists
-        if os.path.exists(lock_file):
-            # Check if the process in the lock file is still running
-            try:
-                with open(lock_file, 'r') as f:
-                    pid = f.read().strip()
-                    
-                # Check if process is running
-                if pid and os.path.exists(f"/proc/{pid}"):
-                    self.stdout.write(self.style.WARNING(f"Another scraper is already running (PID: {pid}). Exiting."))
-                    return
-                else:
-                    # Process is not running, remove stale lock file
-                    os.remove(lock_file)
-            except Exception:
-                # If we can't read the file or process doesn't exist, remove it
-                if os.path.exists(lock_file):
-                    os.remove(lock_file)
-        
-        # Create lock file with current PID
-        with open(lock_file, 'w') as f:
-            f.write(str(os.getpid()))
+        max_items = options['max_items']
         
         try:
-            self.stdout.write(self.style.SUCCESS('Starting Grailzee watch data extraction...'))
-            
-            max_items = options['max_items']
-            
-            # Ensure we have a clean state before starting
-            self.kill_chrome_processes()
-            
             # Scrape data from Grailzee
             watches = self.scrape_grailzee_watches(max_items=max_items)
             self.stdout.write(self.style.SUCCESS(f"Successfully scraped {len(watches)} watches"))
-            
-            if not watches:
-                self.stdout.write(self.style.ERROR("No watches were scraped. Exiting."))
-                return
             
             # Count items with images
             items_with_images = sum(1 for watch in watches if watch.get('image_url'))
@@ -539,10 +493,3 @@ class Command(BaseCommand):
             
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"Error during scraping: {str(e)}"))
-        finally:
-            # Remove lock file when done
-            if os.path.exists(lock_file):
-                os.remove(lock_file)
-            
-            # Make sure all Chrome processes are killed
-            self.kill_chrome_processes()
