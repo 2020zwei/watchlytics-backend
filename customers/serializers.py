@@ -12,7 +12,7 @@ class CustomerSerializer(serializers.ModelSerializer):
         model = Customer
         fields = [
             'id', 'name', 'email', 'phone', 'address', 'notes', 
-            'status', 'status_display',
+            'status', 'status_display', 'profile_picture',
             'orders_count', 'last_purchase_date', 'total_spending',
             'follow_up_display'
         ]
@@ -51,6 +51,7 @@ class CustomerSerializer(serializers.ModelSerializer):
 
 
 class CustomerCreateSerializer(serializers.ModelSerializer):
+    profile_picture=serializers.ImageField(required=False)
     class Meta:
         model = Customer
         fields = ['name', 'email', 'phone', 'address', 'notes', 'status']

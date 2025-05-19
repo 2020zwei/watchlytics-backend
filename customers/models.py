@@ -1,7 +1,13 @@
 from django.db import models
 from auth_.models import User
+from django.core.validators import FileExtensionValidator,  RegexValidator
+from django.core.files.storage import default_storage
+import uuid
 
-
+def get_profile_image_path(instance, filename):
+    ext = filename.split('.')[-1]
+    user_id = instance.pk or uuid.uuid4().hex
+    return f'profile_pictures/user_{user_id}/profile.{ext}'
 class CustomerManager(models.Manager):
     def active(self):
         return self.filter(status=True)
@@ -46,6 +52,14 @@ class Customer(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     status = models.BooleanField(default=True)
+
+    profile_picture = models.ImageField(
+        upload_to="profile_pictures/",
+        null=True,
+        blank=True,
+        validators=[FileExtensionValidator(['jpg', 'jpeg', 'png'])],
+        storage=default_storage
+    )
     
     objects = CustomerManager()
 
