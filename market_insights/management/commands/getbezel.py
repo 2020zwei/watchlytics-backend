@@ -423,7 +423,7 @@ class Command(BaseCommand):
                 
                 # Create new MarketData entry
                 market_data = MarketData(
-                    source='Bezel',
+                    source='bezel',
                     price=price_value,
                     item_id=item_id,
                     name=watch.get('model'),
