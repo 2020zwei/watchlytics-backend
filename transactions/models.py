@@ -41,7 +41,7 @@ class TransactionHistory(models.Model):
     
     @property
     def total_sale_price(self):
-        return sum(item.quantity * (item.sale_price or item.product.selling_price) for item in self.transaction_items.all())
+        return sum(item.quantity * (item.sale_price or item.product.sale_price) for item in self.transaction_items.all())
     
     @property
     def profit(self):
@@ -68,5 +68,5 @@ class TransactionItem(models.Model):
     
     @property
     def total_sale_price(self):
-        price = self.sale_price or self.product.selling_price
+        price = self.sale_price or self.product.sale_price
         return self.quantity * price
