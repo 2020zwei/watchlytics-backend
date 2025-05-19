@@ -54,7 +54,7 @@ class CustomerCreateSerializer(serializers.ModelSerializer):
     profile_picture=serializers.ImageField(required=False)
     class Meta:
         model = Customer
-        fields = ['name', 'email', 'phone', 'address', 'notes', 'status']
+        fields = ['name', 'email', 'phone', 'address', 'notes', 'status', 'profile_picture']
     
     def validate_email(self, value):
         if not value:

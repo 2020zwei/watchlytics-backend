@@ -18,7 +18,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status']
     search_fields = ['name', 'email', 'phone', 'address', 'notes']
     ordering_fields = ['name', 'created_at', 'updated_at', 'orders_count', 'last_purchase_date', 'total_spending']
-    ordering = ['name']  # Default ordering
+    ordering = ['-created_at']
     
     def get_queryset(self):
         queryset = self.queryset.filter(user=self.request.user)
