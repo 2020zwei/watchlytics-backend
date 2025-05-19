@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 import tempfile
 import uuid
+import hashlib
 from django.core.management.base import BaseCommand
 from market_insights.models import MarketData
 from selenium import webdriver
@@ -25,6 +26,16 @@ class Command(BaseCommand):
             type=int,
             default=200,
             help='Maximum number of items to scrape'
+        )
+        parser.add_argument(
+            '--force_update',
+            action='store_true',
+            help='Force update existing items in database'
+        )
+        parser.add_argument(
+            '--debug',
+            action='store_true',
+            help='Print detailed debug information about skipped items'
         )
 
     def extract_reference_number(self, model_text):
@@ -160,6 +171,7 @@ class Command(BaseCommand):
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         watches_data = []
+        processed_cards = set()  # Track cards we've already processed
         
         try:
             # Load the page with filter for popular brands
@@ -245,9 +257,19 @@ class Command(BaseCommand):
                     
                 previous_item_count = current_item_count
                 
-                # Process new cards
-                start_index = len(watches_data)
-                for card in model_cards[start_index:]:
+                # Process new cards by using a fingerprint approach to avoid duplicates during scraping
+                for i, card in enumerate(model_cards):
+                    # Create a card fingerprint based on its HTML content to detect duplicates
+                    card_html = str(card)
+                    card_fingerprint = hashlib.md5(card_html.encode()).hexdigest()
+                    
+                    # Skip if we've already processed this card
+                    if card_fingerprint in processed_cards:
+                        continue
+                    
+                    # Add to processed set
+                    processed_cards.add(card_fingerprint)
+                    
                     try:
                         # Extract brand and model
                         brand = card.find('div', class_='text-secondary riforma-medium fs-10px letter-spacing-1 ModelCard_title__xb6I5')
@@ -278,21 +300,31 @@ class Command(BaseCommand):
                         matches = re.findall(r'https:\/\/[^\s",]+?\.(?:png|jpg|jpeg|webp)', card_html)
                         first_image_url = matches[0] if matches else None
                         
-                        # Generate an item_id (we need something unique for the database)
-                        # Use combination of brand, model and price if possible
+                        # Generate a truly unique item_id that includes unique product features
+                        # and also position information to handle duplicate products
                         unique_parts = []
                         if brand:
                             unique_parts.append(brand.replace(' ', '_'))
                         if model_text:
                             unique_parts.append(model_text.replace(' ', '_'))
+                        if reference_number:
+                            unique_parts.append(reference_number)
                         if amount:
                             unique_parts.append(str(amount))
+                        if first_image_url:
+                            # Use only the filename part of the URL as it should be unique enough
+                            image_filename = first_image_url.split('/')[-1].split('?')[0]
+                            unique_parts.append(image_filename)
                         
-                        # Create a unique item_id
-                        item_id = "bezel_" + "_".join(unique_parts)
-                        if not item_id or item_id == "bezel_":
-                            # Fallback to timestamp if we couldn't create a better id
-                            item_id = f"bezel_{int(time.time())}_{len(watches_data)}"
+                        # Create a more unique item_id
+                        unique_string = "_".join(filter(None, unique_parts))
+                        if not unique_string:
+                            # Fallback to timestamp + fingerprint if we couldn't create a better id
+                            item_id = f"bezel_{int(time.time())}_{card_fingerprint[:8]}"
+                        else:
+                            # Create a hash-based ID to avoid excessive length
+                            item_hash = hashlib.md5(unique_string.encode()).hexdigest()[:12]
+                            item_id = f"bezel_{item_hash}"
                         
                         # Build watch dictionary
                         watch = {
@@ -302,7 +334,8 @@ class Command(BaseCommand):
                             'price': amount,
                             'reference_number': reference_number,
                             'image_url': first_image_url,
-                            'item_id': item_id
+                            'item_id': item_id,
+                            'card_fingerprint': card_fingerprint  # Store this for debugging
                         }
                         
                         watches_data.append(watch)
@@ -311,7 +344,7 @@ class Command(BaseCommand):
                             break
                             
                     except Exception as e:
-                        self.stdout.write(self.style.ERROR(f"Error processing card: {str(e)}"))
+                        self.stdout.write(self.style.ERROR(f"Error processing card {i}: {str(e)}"))
                 
                 # If we've reached the target number of items, break
                 if len(watches_data) >= max_items:
@@ -384,6 +417,8 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS('Starting getbezel watch data extraction...'))
         
         max_items = options['max_items']
+        force_update = options['force_update']
+        debug = options['debug']
         
         try:
             # Scrape data from getbezel
@@ -398,19 +433,57 @@ class Command(BaseCommand):
             
             # Save each watch to the MarketData model
             saved_count = 0
+            updated_count = 0
             skipped_count = 0
+            skipped_reasons = {
+                'no_item_id': 0,
+                'already_exists': 0,
+                'other': 0
+            }
             
             for watch in watches:
                 # Skip if no item_id
                 item_id = watch.get('item_id')
                 if not item_id:
                     skipped_count += 1
+                    skipped_reasons['no_item_id'] += 1
+                    if debug:
+                        self.stdout.write(f"DEBUG: Skipping item with no item_id: {watch}")
                     continue
                 
                 # Check if item already exists in database
-                if MarketData.objects.filter(item_id=item_id).exists():
-                    self.stdout.write(f"Item {item_id} already exists in database, skipping...")
+                existing_item = MarketData.objects.filter(item_id=item_id).first()
+                if existing_item and not force_update:
                     skipped_count += 1
+                    skipped_reasons['already_exists'] += 1
+                    if debug:
+                        self.stdout.write(f"DEBUG: Item {item_id} already exists in database, skipping...")
+                    continue
+                elif existing_item and force_update:
+                    # Convert price to Decimal if it exists
+                    price_value = Decimal('0')
+                    if watch.get('price'):
+                        try:
+                            price_value = Decimal(str(watch['price']))
+                        except (ValueError, TypeError):
+                            self.stdout.write(self.style.WARNING(f"Could not convert price for item {item_id}"))
+                    
+                    # Update existing entry
+                    try:
+                        existing_item.source = 'bezel'
+                        existing_item.price = price_value
+                        existing_item.name = watch.get('model')
+                        existing_item.image_url = watch.get('image_url')
+                        existing_item.reference_number = watch.get('reference_number')
+                        existing_item.brand = watch.get('brand')
+                        existing_item.condition = watch.get('availability')
+                        existing_item.updated_at = datetime.now()
+                        existing_item.save()
+                        updated_count += 1
+                    except Exception as e:
+                        self.stdout.write(self.style.ERROR(f"Error updating item {item_id}: {str(e)}"))
+                        skipped_count += 1
+                        skipped_reasons['other'] += 1
                     continue
                 
                 # Convert price to Decimal if it exists
@@ -423,7 +496,7 @@ class Command(BaseCommand):
                 
                 # Create new MarketData entry
                 market_data = MarketData(
-                    source='Bezel',
+                    source='bezel',
                     price=price_value,
                     item_id=item_id,
                     name=watch.get('model'),
@@ -440,6 +513,7 @@ class Command(BaseCommand):
                 except Exception as e:
                     self.stdout.write(self.style.ERROR(f"Error saving item {item_id}: {str(e)}"))
                     skipped_count += 1
+                    skipped_reasons['other'] += 1
             
             # Save raw data to JSON as backup
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -452,7 +526,9 @@ class Command(BaseCommand):
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(watches, f, indent=2, ensure_ascii=False)
             
-            self.stdout.write(self.style.SUCCESS(f'Saved {saved_count} new items to database, skipped {skipped_count} items'))
+            # Print detailed stats about skipped items
+            self.stdout.write(self.style.SUCCESS(f'Saved {saved_count} new items to database, updated {updated_count} items, skipped {skipped_count} items'))
+            self.stdout.write(f'Skipped reasons: {skipped_reasons}')
             self.stdout.write(self.style.SUCCESS(f'Raw data backup saved to {filename}'))
             
         except Exception as e:
