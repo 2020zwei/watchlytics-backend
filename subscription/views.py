@@ -80,7 +80,7 @@ class StripePayment(APIView):
         except Exception as e:
             raise CustomException({"message": str(e)})
 
-    def create_or_update_user_card(self, user, payment_method_token):
+    def create_or_update_user_card(self, user, payment_method_token, card_holder_name):
         try:
             payment_method = stripe.PaymentMethod.retrieve(payment_method_token)
             
@@ -104,6 +104,7 @@ class StripePayment(APIView):
                     last_four=payment_method.card.last4,
                     exp_month=payment_method.card.exp_month,
                     exp_year=payment_method.card.exp_year,
+                    card_holder_name=card_holder_name,
                     is_default=True
                 )
                 return card
@@ -278,7 +279,7 @@ class StripePayment(APIView):
             user = request.user
             plan_name = request.data.get('plan_name', '')
             price_id = request.data.get('price_id', '')
-            
+            card_holder_name = request.data.get('card_holder_name', '')
             if request.data.get('is_cancelled_subscription', "false").lower() == "true":
                 return self.cancel_subscription_flow(user=user)
             
@@ -313,7 +314,7 @@ class StripePayment(APIView):
                 return Response(response, status.HTTP_400_BAD_REQUEST)
 
             try:
-                user_card = self.create_or_update_user_card(user, payment_method_token)
+                user_card = self.create_or_update_user_card(user, payment_method_token, card_holder_name)
             except Exception as card_error:
                 return Response({
                     'success': False,
