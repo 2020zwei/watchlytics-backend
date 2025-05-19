@@ -149,7 +149,8 @@ class Command(BaseCommand):
         # Create a temporary unique user profile directory
         # unique_dir = os.path.join(tempfile.gettempdir(), f"chrome_profile_{uuid.uuid4().hex}")
         # options.add_argument(f"--user-data-dir={unique_dir}")
-        
+        user_data_dir = tempfile.mkdtemp()
+        options.add_argument(f"--user-data-dir={user_data_dir}")
         # Add anti-detection measures
         options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.91 Safari/537.36")
         options.add_argument("--disable-blink-features=AutomationControlled")
