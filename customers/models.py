@@ -48,6 +48,15 @@ class Customer(models.Model):
     status = models.BooleanField(default=True)
     
     objects = CustomerManager()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'email'],
+                name='unique_user_customer_email',
+                condition=models.Q(email__isnull=False)
+            )
+        ]
     
     def __str__(self):
         return self.name
@@ -89,7 +98,6 @@ class Customer(models.Model):
         self.status = not self.status
         self.save(update_fields=['status'])
         return self
-
 
 class CustomerTag(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='customer_tags')

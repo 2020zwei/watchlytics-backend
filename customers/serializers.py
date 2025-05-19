@@ -35,6 +35,19 @@ class CustomerSerializer(serializers.ModelSerializer):
                 data['phone'] = f"{phone[:3]}-{phone[3:6]}-{phone[6:]}"
         
         return data
+        
+    def validate_email(self, value):
+        if not value:
+            return value
+            
+        user = self.context['request'].user
+        existing = Customer.objects.filter(user=user, email=value)
+        if self.instance:
+            existing = existing.exclude(pk=self.instance.pk)
+        
+        if existing.exists():
+            raise serializers.ValidationError("You already have a customer with this email address.")
+        return value
 
 
 class CustomerCreateSerializer(serializers.ModelSerializer):
@@ -42,10 +55,14 @@ class CustomerCreateSerializer(serializers.ModelSerializer):
         model = Customer
         fields = ['name', 'email', 'phone', 'address', 'notes', 'status']
     
-    def create(self, validated_data):
+    def validate_email(self, value):
+        if not value:
+            return value
+            
         user = self.context['request'].user
-        customer = Customer.objects.create(user=user, **validated_data)
-        return customer
+        if Customer.objects.filter(user=user, email=value).exists():
+            raise serializers.ValidationError("You already have a customer with this email address.")
+        return value
     
 
 class CustomerDetailSerializer(CustomerSerializer):
