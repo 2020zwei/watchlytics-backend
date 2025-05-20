@@ -365,9 +365,9 @@ class ProductCSVUploadAPIView(APIView):
         errors = []
         user = self.request.user
         
-        with transaction.atomic():
-            for index, row in enumerate(rows, start=2):
-                try:
+        for index, row in enumerate(rows, start=2):
+            try:
+                with transaction.atomic():
                     normalized_row = self._normalize_row(row)
                     
                     product_id = normalized_row.get('Reference')
@@ -411,6 +411,15 @@ class ProductCSVUploadAPIView(APIView):
                         if existing_products.exists():
                             existing_product = existing_products.first()
 
+                    if not existing_product and product_id:
+                        if Product.objects.filter(product_id=product_id).exists():
+                            original_id = product_id
+                            product_id = f"{product_id}-{int(timezone.now().timestamp())}"
+                            errors.append({
+                                'row': index, 
+                                'warning': f"Product ID '{original_id}' already exists. Created with modified ID '{product_id}'"
+                            })
+
                     product_data = {
                         'owner': user,
                         'model_name': model_name or brand_name,
@@ -442,8 +451,8 @@ class ProductCSVUploadAPIView(APIView):
                         Product.objects.create(**product_data)
                         created += 1
                         
-                except Exception as e:
-                    errors.append({'row': index, 'error': str(e)})
+            except Exception as e:
+                errors.append({'row': index, 'error': str(e)})
 
         return Response({
             'created': created,
