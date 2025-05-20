@@ -123,5 +123,21 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         
         return data
     
+    def validate_product_id(self, value):
+        request = self.context.get('request')
+        if not request or not request.user:
+            return value
+        user = request.user
+        existing_query = Product.objects.filter(owner=user, product_id=value)
+        if self.instance:
+            existing_query = existing_query.exclude(pk=self.instance.pk)
+            
+        if existing_query.exists():
+            raise serializers.ValidationError(
+                f"You already have a product with Reference Number: '{value}'"
+            )
+            
+        return value
+    
 class ProductCSVUploadSerializer(serializers.Serializer):
     csv_file = serializers.FileField()

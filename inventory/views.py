@@ -414,7 +414,7 @@ class ProductCSVUploadAPIView(APIView):
                     if not existing_product and product_id:
                         if Product.objects.filter(product_id=product_id).exists():
                             original_id = product_id
-                            product_id = f"{product_id}-{int(timezone.now().timestamp())}"
+                            # product_id = f"{product_id}-{int(timezone.now().timestamp())}"
                             errors.append({
                                 'row': index, 
                                 'warning': f"Product ID '{original_id}' already exists. Created with modified ID '{product_id}'"

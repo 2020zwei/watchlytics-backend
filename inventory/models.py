@@ -28,8 +28,8 @@ class Product(models.Model):
     )
     
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='products')
-    model_name = models.CharField(max_length=200)
-    product_id = models.CharField(max_length=50, unique=True)
+    model_name = models.CharField(max_length=200, blank=True, null=True)
+    product_id = models.CharField(max_length=50)
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='products')
     availability = models.CharField(max_length=20, choices=AVAILABILTY_CHOICES, default='in_stock')
     
