@@ -340,6 +340,9 @@ class ProductCSVUploadAPIView(APIView):
         if not uploaded_file:
             return Response({'error': 'No file provided.'}, status=400)
 
+        if uploaded_file.size == 0:
+            return Response({'error': 'The uploaded file is empty (zero bytes).'}, status=400)
+
         filename = uploaded_file.name.lower()
 
         try:
@@ -347,18 +350,69 @@ class ProductCSVUploadAPIView(APIView):
             if filename.endswith('.csv'):
                 reader = csv.DictReader(TextIOWrapper(uploaded_file.file, encoding='utf-8'))
                 rows = list(reader)
+                if not rows:
+                    return Response({'error': 'The uploaded CSV file is empty.'}, status=400)
+                
+                non_empty_rows = 0
+                for row in rows:
+                    has_data = False
+                    for key, value in row.items():
+                        if value and (not isinstance(value, str) or value.strip()):
+                            has_data = True
+                            break
+                    if has_data:
+                        non_empty_rows += 1
+                
+                if non_empty_rows == 0:
+                    return Response({'error': 'The uploaded CSV file contains only empty rows.'}, status=400)
+                
             elif filename.endswith(('.xlsx', '.xls')):
                 wb = openpyxl.load_workbook(uploaded_file)
                 sheet = wb.active
+                if sheet.max_row <= 1:
+                    return Response({'error': 'The uploaded Excel file is empty or contains only headers.'}, status=400)
+                    
                 headers = [cell.value for cell in sheet[1] if cell.value]
+                if not headers:
+                    return Response({'error': 'The uploaded Excel file does not contain valid headers.'}, status=400)
+                    
                 rows = [
                     {headers[i]: cell.value for i, cell in enumerate(row) if i < len(headers)}
                     for row in sheet.iter_rows(min_row=2)
                 ]
+                if not rows:
+                    return Response({'error': 'The uploaded Excel file does not contain any data rows.'}, status=400)
+                
+                non_empty_rows = 0
+                for row in rows:
+                    has_data = False
+                    for key, value in row.items():
+                        if value and (not isinstance(value, str) or value.strip()):
+                            has_data = True
+                            break
+                    if has_data:
+                        non_empty_rows += 1
+                
+                if non_empty_rows == 0:
+                    return Response({'error': 'The uploaded Excel file contains only empty rows.'}, status=400)
             else:
                 return Response({'error': 'Unsupported file format. Please upload CSV or Excel file.'}, status=400)
         except Exception as e:
             return Response({'error': f'Error processing file: {str(e)}'}, status=400)
+
+        has_valid_data = False
+        for row in rows:
+            normalized_row = self._normalize_row(row)
+            product_id = normalized_row.get('Reference')
+            serial_number = normalized_row.get('Serial Number')
+            model_name = normalized_row.get('Model Name')
+            
+            if product_id or serial_number or model_name:
+                has_valid_data = True
+                break
+        
+        if not has_valid_data:
+            return Response({'error': 'The file does not contain any valid product data. Each product requires at least one of: Reference, Serial Number, or Model Name.'}, status=400)
 
         created = 0
         updated = 0
