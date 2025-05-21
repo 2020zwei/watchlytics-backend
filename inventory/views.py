@@ -22,7 +22,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from django.db import transaction
 from transactions.models import TransactionHistory, TransactionItem
-from django.core.exceptions import ValidationError
+
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
@@ -301,7 +301,6 @@ class DashboardStatsView(APIView):
     
 
 class ProductCSVUploadAPIView(APIView):
-    REQUIRED_FIELDS = ['Brand', 'Reference', 'Buy Price', 'Purchase Date']
 
     @staticmethod
     def parse_decimal(value, default=0):
@@ -335,31 +334,6 @@ class ProductCSVUploadAPIView(APIView):
                 continue
                 
         return None
-    
-    def validate_file_content(self, rows, headers=None):
-        errors = []
-        if not rows:
-            raise ValidationError("The uploaded file is empty. Please upload a file with data.")
-        if headers:
-            missing_fields = [field for field in self.REQUIRED_FIELDS if field not in headers]
-            if missing_fields:
-                raise ValidationError(f"Required columns missing: {', '.join(missing_fields)}")
-        
-        for idx, row in enumerate(rows, start=2):
-            row_errors = []
-            
-            for field in self.REQUIRED_FIELDS:
-                value = row.get(field)
-                if value is None or (isinstance(value, str) and not value.strip()):
-                    row_errors.append(f"Missing required value for '{field}'")
-            
-            if row_errors:
-                errors.append({
-                    'row': idx,
-                    'errors': row_errors
-                })
-                
-        return errors
             
     def post(self, request, *args, **kwargs):
         uploaded_file = request.FILES.get('excel_file')
@@ -367,50 +341,22 @@ class ProductCSVUploadAPIView(APIView):
             return Response({'error': 'No file provided.'}, status=400)
 
         filename = uploaded_file.name.lower()
-        rows = []
-        headers = []
 
         try:
             # Parse file based on extension
             if filename.endswith('.csv'):
-                file_content = TextIOWrapper(uploaded_file.file, encoding='utf-8')
-                reader = csv.DictReader(file_content)
-                headers = reader.fieldnames
-                if not headers:
-                    return Response({'error': 'The CSV file does not have any headers.'}, status=400)
-                
+                reader = csv.DictReader(TextIOWrapper(uploaded_file.file, encoding='utf-8'))
                 rows = list(reader)
             elif filename.endswith(('.xlsx', '.xls')):
                 wb = openpyxl.load_workbook(uploaded_file)
                 sheet = wb.active
-                if sheet.max_row <= 1:
-                    return Response({'error': 'The Excel file is empty or contains only headers.'}, status=400)
-                
                 headers = [cell.value for cell in sheet[1] if cell.value]
-                if not headers:
-                    return Response({'error': 'The Excel file does not have any headers.'}, status=400)
-                
                 rows = [
                     {headers[i]: cell.value for i, cell in enumerate(row) if i < len(headers)}
                     for row in sheet.iter_rows(min_row=2)
                 ]
             else:
                 return Response({'error': 'Unsupported file format. Please upload CSV or Excel file.'}, status=400)
-            missing_fields = [field for field in self.REQUIRED_FIELDS if field not in headers]
-            if missing_fields:
-                return Response({
-                    'error': f'Required columns missing: {", ".join(missing_fields)}. Please make sure your file contains all required fields.'
-                }, status=400)
-            
-            content_errors = self.validate_file_content(rows)
-            if content_errors:
-                return Response({
-                    'error': 'The file contains invalid or missing data.',
-                    'row_errors': content_errors
-                }, status=400)
-                
-        except ValidationError as ve:
-            return Response({'error': str(ve)}, status=400)
         except Exception as e:
             return Response({'error': f'Error processing file: {str(e)}'}, status=400)
 
@@ -424,33 +370,14 @@ class ProductCSVUploadAPIView(APIView):
                 with transaction.atomic():
                     normalized_row = self._normalize_row(row)
                     
-                    missing_required = []
-                    for field in self.REQUIRED_FIELDS:
-                        value = normalized_row.get(field)
-                        if value is None or (isinstance(value, str) and not value.strip()):
-                            missing_required.append(field)
-                    
-                    if missing_required:
-                        errors.append({
-                            'row': index,
-                            'error': f"Missing required values: {', '.join(missing_required)}"
-                        })
-                        continue
-                    
                     product_id = normalized_row.get('Reference')
                     serial_number = normalized_row.get('Serial Number')
                     model_name = normalized_row.get('Model Name')
                     
-                    buy_price = self.parse_decimal(normalized_row.get('Buy Price'))
-                    date_purchased = self.to_date(normalized_row.get('Purchase Date'))
-                    
-                    if not date_purchased:
-                        errors.append({
-                            'row': index,
-                            'error': "Invalid Purchase Date format. Supported formats: YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY"
-                        })
+                    if not (product_id or serial_number or model_name):
                         continue
                         
+                    buy_price = self.parse_decimal(normalized_row.get('Buy Price'))
                     total_cost = self.parse_decimal(normalized_row.get('Total Cost'))
                     sell_price = self.parse_decimal(normalized_row.get('Sell Price'))
                     shipping_price = self.parse_decimal(normalized_row.get('Shipping'))
@@ -459,20 +386,14 @@ class ProductCSVUploadAPIView(APIView):
                     profit = sell_price - buy_price
                     profit_margin = int((profit / buy_price) * 100) if buy_price else 0
                     
-                    brand_name = normalized_row.get('Brand')
-                    if not brand_name or (isinstance(brand_name, str) and not brand_name.strip()):
-                        errors.append({
-                            'row': index,
-                            'error': "Brand field cannot be empty"
-                        })
-                        continue
-                        
+                    brand_name = normalized_row.get('Brand') or 'Unnamed Product'
                     category_name = brand_name.strip()
                     category, _ = Category.objects.get_or_create(
                         name__iexact=category_name,
                         defaults={'name': category_name}
                     )
                     
+                    date_purchased = self.to_date(normalized_row.get('Purchase Date'))
                     sold_date = self.to_date(normalized_row.get('Sold Date'))
                     
                     if not product_id:
@@ -532,12 +453,6 @@ class ProductCSVUploadAPIView(APIView):
                         
             except Exception as e:
                 errors.append({'row': index, 'error': str(e)})
-
-        if errors and not (created or updated):
-            return Response({
-                'error': 'No products were imported due to validation errors.',
-                'errors': errors
-            }, status=400)
 
         return Response({
             'created': created,
