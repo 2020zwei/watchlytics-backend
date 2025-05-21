@@ -131,7 +131,7 @@ class BestSellingProductsAPIView(APIView):
                 # Calculate remaining quantity for this product_id
                 remaining_query = Product.objects.filter(
                     owner=user,
-                    availability='in_stock'
+                    # availability='in_stock'
                 )
                 
                 # Filter by product_id if available
