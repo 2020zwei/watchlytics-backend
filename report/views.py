@@ -223,16 +223,17 @@ class ExpenseReportAPIView(APIView):
                 total=Coalesce(Sum('shipping_price'), 0, output_field=DecimalField())
             )['total'] or 0
 
-            total_cost = product_data.aggregate(
+            purchase_cost = product_data.aggregate(
                 total=Coalesce(Sum('buying_price'), 0, output_field=DecimalField())
-            )['total'] or 1
+            )['total'] or 0
+            total_cost = purchase_cost + repairs_cost + shipping_cost
 
             impact = ((repairs_cost + shipping_cost) / total_cost) * 100 if total_cost > 0 else 0
 
             product_expenses.append({
                 'product': model_name,
                 'reference_number': first_product.product_id,
-                'purchase_price': float(first_product.buying_price or 0),
+                'purchase_price': float(purchase_cost),
                 'repairs': float(repairs_cost),
                 'shipping': float(shipping_cost),
                 'impact': round(impact, 1),
