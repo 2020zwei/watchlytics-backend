@@ -2,6 +2,7 @@ from django.db import models
 from auth_.models import User
 from inventory.models import Product
 from customers.models import Customer
+from decimal import Decimal
 
 class TransactionHistory(models.Model):
     """Base transaction model"""
@@ -37,18 +38,18 @@ class TransactionHistory(models.Model):
     
     @property
     def total_purchase_price(self):
-        return sum(item.quantity * (item.purchase_price or item.product.buying_price) for item in self.transaction_items.all())
+        return sum((item.total_purchase_price or Decimal('0')) for item in self.transaction_items.all())
     
     @property
     def total_sale_price(self):
-        return sum(item.quantity * (item.sale_price or item.product.sold_price) for item in self.transaction_items.all())
+        return sum((item.total_sale_price or Decimal('0')) for item in self.transaction_items.all())
     
     @property
     def profit(self):
-        if self.transaction_type == 'sale':
-            total_expenses = sum(expense['amount'] for expense in self.expenses.values())
-            return self.total_sale_price - self.total_purchase_price - total_expenses
-        return None
+        if self.transaction_type != 'sale':
+            return Decimal('0')
+        
+        return self.total_sale_price - self.total_purchase_price
 
 
 class TransactionItem(models.Model):
@@ -63,10 +64,12 @@ class TransactionItem(models.Model):
     
     @property
     def total_purchase_price(self):
-        price = self.purchase_price or self.product.buying_price
-        return self.quantity * price
+        if self.quantity is None or self.purchase_price is None:
+            return Decimal('0')
+        return Decimal(self.quantity) * Decimal(self.purchase_price)
     
     @property
     def total_sale_price(self):
-        price = self.sale_price or self.product.sold_price
-        return self.quantity * price
+        if self.quantity is None or self.sale_price is None:
+            return Decimal('0')
+        return Decimal(self.quantity) * Decimal(self.sale_price)
