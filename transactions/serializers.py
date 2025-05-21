@@ -79,8 +79,8 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                 
                 product_name = getattr(product, 'model_name', str(product))
                 
-                if requested_quantity > product.quantity:
-                    errors.append(f"Not enough inventory for {product_name}. Available: {product.quantity}, Requested: {requested_quantity}")
+                # if requested_quantity > product.quantity:
+                #     errors.append(f"Not enough inventory for {product_name}. Available: {product.quantity}, Requested: {requested_quantity}")
             
             if errors:
                 raise ValidationError(errors[0] if len(errors) == 1 else errors)
@@ -130,29 +130,33 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
         instance.save()
         
         if items_data is not None:
-            for old_item in instance.transaction_items.all():
-                product = old_item.product
-                if instance.transaction_type == 'purchase':
-                    product.quantity -= old_item.quantity
-                elif instance.transaction_type == 'sale':
-                    product.quantity += old_item.quantity
+            old_items = {item.product.id: item for item in instance.transaction_items.all()}
+            if instance.transaction_type == 'sale':
+                for item_data in items_data:
+                    product = item_data['product']
+                    new_quantity = item_data['quantity']
+                    old_quantity = old_items.get(product.id, None)
                     
-                    if product.is_sold and product.quantity > 0:
-                        product.is_sold = False
-                        product.availability = "in_stock"
-                        product.date_sold = None
-                        
-                product.save()
+                    if old_quantity is not None:
+                        net_change = new_quantity - old_quantity.quantity
+                    else:
+                        net_change = new_quantity
+                    
+                    if net_change > 0:
+                        available_qty = product.quantity 
+                        if net_change > available_qty:
+                            product_name = getattr(product, 'model_name', str(product))
+                            raise ValidationError(
+                                f"Not enough inventory for {product_name}. "
+                                f"Available: {available_qty}, Additional needed: {net_change}"
+                            )
             
             instance.transaction_items.all().delete()
             
             for item_data in items_data:
                 product = item_data['product']
-                quantity = item_data['quantity']
-                
-                if instance.transaction_type == 'sale' and quantity > product.quantity:
-                    product_name = getattr(product, 'model_name', str(product))
-                    raise ValidationError(f"Not enough inventory for {product_name}. Available: {product.quantity}, Requested: {quantity}")
+                new_quantity = item_data['quantity']
+                old_quantity = old_items.get(product.id, None)
                 
                 item_data['purchase_price'] = Decimal(str(item_data['purchase_price']))
                 item_data['sale_price'] = Decimal(str(item_data['sale_price']))
@@ -162,15 +166,25 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                     **item_data
                 )
                 
+                if old_quantity is not None:
+                    net_change = new_quantity - old_quantity.quantity
+                else:
+                    net_change = new_quantity
+                
                 if instance.transaction_type == 'purchase':
-                    product.quantity += quantity
+                    product.quantity += net_change
                 elif instance.transaction_type == 'sale':
-                    product.quantity -= quantity
+                    product.quantity -= net_change
                     
-                    if product.quantity == 0:
-                        product.is_sold = True
-                        product.availability = "sold"
-                        product.date_sold = timezone.now()
+                # Update product status based on new quantity
+                if product.quantity == 0:
+                    product.is_sold = True
+                    product.availability = "sold"
+                    product.date_sold = timezone.now()
+                elif product.quantity > 0 and product.is_sold:
+                    product.is_sold = False
+                    product.availability = "in_stock"
+                    product.date_sold = None
                 
                 product.save()
         
