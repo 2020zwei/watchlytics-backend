@@ -94,53 +94,57 @@ class TransactionHistoryViewSet(viewsets.ModelViewSet):
         """
         Get transaction summary statistics
         """
-        queryset = self.get_queryset()
-        
-        # Calculate total sales and purchases
-        total_sales = queryset.filter(transaction_type='sale').count()
-        total_purchases = queryset.filter(transaction_type='purchase').count()
-        
-        # Calculate total sales amount and purchases amount
-        sales_transactions = queryset.filter(transaction_type='sale')
-        purchases_transactions = queryset.filter(transaction_type='purchase')
-        
-        sales_amount = sum(transaction.total_sale_price or 0 for transaction in sales_transactions)
-        purchases_amount = sum(transaction.total_purchase_price or 0 for transaction in purchases_transactions)
-        
-        # Calculate total profit
-        total_profit = sum(transaction.profit or 0 for transaction in sales_transactions)
-        
-        product_stats = {}
-        items = TransactionItem.objects.filter(
-            transaction__user=request.user
-        ).select_related('product', 'transaction')
-        
-        for item in items:
-            product_id = item.product_id
-            if product_id not in product_stats:
-                product_stats[product_id] = {
-                    'name': item.product.name,
-                    'total_sold': 0,
-                    'total_purchased': 0,
-                    'revenue': 0,
-                    'cost': 0
-                }
+        try:
+            queryset = self.get_queryset()
             
-            if item.transaction.transaction_type == 'sale':
-                product_stats[product_id]['total_sold'] += item.quantity
-                product_stats[product_id]['revenue'] += item.total_sale_price
-            else:
-                product_stats[product_id]['total_purchased'] += item.quantity
-                product_stats[product_id]['cost'] += item.total_purchase_price
-        
-        return Response({
-            'total_sales': total_sales,
-            'total_purchases': total_purchases,
-            'sales_amount': sales_amount,
-            'purchases_amount': purchases_amount,
-            'total_profit': total_profit,
-            'product_stats': product_stats
-        })
+            # Calculate total sales and purchases
+            total_sales = queryset.filter(transaction_type='sale').count()
+            total_purchases = queryset.filter(transaction_type='purchase').count()
+            
+            # Calculate total sales amount and purchases amount
+            sales_transactions = queryset.filter(transaction_type='sale')
+            purchases_transactions = queryset.filter(transaction_type='purchase')
+            
+            # Safely sum values, handling None values
+            sales_amount = sum((transaction.total_sale_price or Decimal('0')) for transaction in sales_transactions)
+            purchases_amount = sum((transaction.total_purchase_price or Decimal('0')) for transaction in purchases_transactions)
+            
+            # Calculate total profit, handling None values
+            total_profit = sum((transaction.profit or Decimal('0')) for transaction in sales_transactions)
+            
+            product_stats = {}
+            items = TransactionItem.objects.filter(
+                transaction__user=request.user
+            ).select_related('product', 'transaction')
+            
+            for item in items:
+                product_id = item.product_id
+                if product_id not in product_stats:
+                    product_stats[product_id] = {
+                        'name': item.product.name,
+                        'total_sold': 0,
+                        'total_purchased': 0,
+                        'revenue': Decimal('0'),
+                        'cost': Decimal('0')
+                    }
+                
+                if item.transaction.transaction_type == 'sale':
+                    product_stats[product_id]['total_sold'] += item.quantity
+                    product_stats[product_id]['revenue'] += (item.total_sale_price or Decimal('0'))
+                else:
+                    product_stats[product_id]['total_purchased'] += item.quantity
+                    product_stats[product_id]['cost'] += (item.total_purchase_price or Decimal('0'))
+            
+            return Response({
+                'total_sales': total_sales,
+                'total_purchases': total_purchases,
+                'sales_amount': sales_amount,
+                'purchases_amount': purchases_amount,
+                'total_profit': total_profit,
+                'product_stats': product_stats
+            })
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class TransactionItemViewSet(viewsets.ModelViewSet):
