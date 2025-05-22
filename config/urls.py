@@ -57,6 +57,7 @@ urlpatterns = [
     path('api/v1/', include('invoices.urls')),
     path('api/v1/reports/', include('report.urls')),
     path('api/v1/shipping/', include('shipping.urls')),
+    path('api/v1/dashboard/', include('dashboard.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 urlpatterns += [

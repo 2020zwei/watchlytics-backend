@@ -62,6 +62,7 @@ PROJECTAPPS = [
     'invoices',
     'shipping',
     'report',
+    'dashboard',
 ]
 
 INSTALLED_APPS += PROJECTAPPS
@@ -319,6 +320,6 @@ AWS_LOCATION = 'static'
 
 EBAY_CLIENT_ID='SyedMuda-watchlyt-PRD-60e925d46-beba5e6b'
 EBAY_CLIENT_SECRET='PRD-0e925d467dc9-e373-4c95-ad93-f4df'
-IFS_APP_USERNAME = os.environ.get('IFS_APP_USERNAME', 'Multi_onDemand')
-IFS_APP_PASSWORD = os.environ.get('IFS_APP_PASSWORD', 'dLCGp2kk7X7ePUMV')
-IFS_ACCOUNT_ID = os.environ.get('IFS_ACCOUNT_ID', '11103')
+IFS_APP_USERNAME = os.environ.get('IFS_APP_USERNAME')
+IFS_APP_PASSWORD = os.environ.get('IFS_APP_PASSWORD')
+IFS_ACCOUNT_ID = os.environ.get('IFS_ACCOUNT_ID')
