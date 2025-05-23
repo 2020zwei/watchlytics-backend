@@ -125,24 +125,13 @@ class ForgotPasswordSerializer(serializers.Serializer):
             }
         )
 
-        message = Mail(
-            from_email="info@watchlytics.io",
-            to_emails=user.email,
+        send_mail(
             subject=email_subject,
-            html_content=email_message
+            message=email_message,
+            from_email="info@once-more.com",
+            recipient_list=[user.email],
+            fail_silently=False
         )
-        tracking_settings = TrackingSettings()
-        click_tracking = ClickTracking(enable=False)
-        tracking_settings.click_tracking = click_tracking
-        message.tracking_settings = tracking_settings
-        
-        try:
-            sg = sendgrid.SendGridAPIClient(api_key=settings.EMAIL_HOST_PASSWORD)
-            response = sg.send(message)
-            return response
-        except Exception as e:
-            print(f"Error sending email: {e}")
-            raise
 
 class UserUpdateSerializer(serializers.ModelSerializer):
     profile_picture=serializers.ImageField(required=False)
