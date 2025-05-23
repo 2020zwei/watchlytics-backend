@@ -3,6 +3,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.pagination import PageNumberPagination
 from django.db.models import Sum, Count, F, Q, Avg, Case, When, Value, IntegerField, DecimalField, FloatField
 from django.db.models.functions import TruncMonth, TruncYear, TruncWeek, Coalesce
 from django.utils import timezone
@@ -12,6 +13,12 @@ from .serializers import ProductSerializer, CategorySerializer, DashboardStatsSe
 import calendar
 from django.db.models.functions import Cast
 from django.db.models import CharField, Case, When, Value, Q
+
+
+class CustomPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 
 class DashboardAPIView(APIView):
@@ -105,6 +112,7 @@ class DashboardAPIView(APIView):
 
 class BestSellingProductsAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CustomPagination
     
     def get(self, request):
         user = request.user
@@ -190,12 +198,18 @@ class BestSellingProductsAPIView(APIView):
         if best_selling:
             best_selling.sort(key=lambda x: x['increase_by'], reverse=True)
         
-        # Return top products as shown in UI
-        return Response(best_selling[:10] if best_selling else [])
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(best_selling, request)
+        
+        if page is not None:
+            return paginator.get_paginated_response(page)
+        
+        return Response(best_selling[:20] if best_selling else [])
 
 
 class ExpenseReportAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CustomPagination
     
     def get(self, request):
         user = request.user
@@ -241,7 +255,14 @@ class ExpenseReportAPIView(APIView):
             })
 
         product_expenses.sort(key=lambda x: x['impact'], reverse=True)
-        return Response(product_expenses[:10] if product_expenses else [])
+        
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(product_expenses, request)
+        
+        if page is not None:
+            return paginator.get_paginated_response(page)
+        
+        return Response(product_expenses[:20] if product_expenses else [])
 
 
 class StockAgingAPIView(APIView):
