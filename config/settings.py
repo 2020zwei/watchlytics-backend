@@ -237,14 +237,22 @@ TEMPLATES = [
 
 
 # Email settings
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = 'smtp-relay.brevo.com'
+# EMAIL_PORT = 587
+# EMAIL_USE_TLS = True
+# EMAIL_HOST_USER = os.getenv('BREVO_USER', '')
+# EMAIL_HOST_PASSWORD = os.getenv('BREVO_PASSWORD', '')
+# DEFAULT_FROM_EMAIL = 'info@once-more.com' 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp-relay.brevo.com'
+EMAIL_HOST = 'smtp.sendgrid.net'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = os.getenv('BREVO_USER', '')
-EMAIL_HOST_PASSWORD = os.getenv('BREVO_PASSWORD', '')
-DEFAULT_FROM_EMAIL = 'info@once-more.com' 
-
+EMAIL_HOST_USER = 'apikey'
+EMAIL_HOST_PASSWORD = os.getenv('SENDGRID_PASSWORD', '')
+DEFAULT_FROM_EMAIL = 'info@watchlytics.io'
+SENDGRID_TRACK_CLICKS_HTML = False
+SENDGRID_TRACK_CLICKS_PLAIN = False
 
 LOGGING = {
     'version': 1,

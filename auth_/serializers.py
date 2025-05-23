@@ -10,6 +10,11 @@ from django.utils.encoding import force_bytes
 from rest_framework import serializers
 from django.utils.encoding import force_bytes, force_str
 import os
+import sendgrid
+from sendgrid.helpers.mail import Mail, TrackingSettings, ClickTracking
+from django.template.loader import render_to_string
+from django.conf import settings
+
 
 User = get_user_model()
 
@@ -120,13 +125,24 @@ class ForgotPasswordSerializer(serializers.Serializer):
             }
         )
 
-        send_mail(
+        message = Mail(
+            from_email="info@watchlytics.io",
+            to_emails=user.email,
             subject=email_subject,
-            message=email_message,
-            from_email="info@once-more.com",
-            recipient_list=[user.email],
-            fail_silently=False
+            html_content=email_message
         )
+        tracking_settings = TrackingSettings()
+        click_tracking = ClickTracking(enable=False)
+        tracking_settings.click_tracking = click_tracking
+        message.tracking_settings = tracking_settings
+        
+        try:
+            sg = sendgrid.SendGridAPIClient(api_key=settings.EMAIL_HOST_PASSWORD)
+            response = sg.send(message)
+            return response
+        except Exception as e:
+            print(f"Error sending email: {e}")
+            raise
 
 class UserUpdateSerializer(serializers.ModelSerializer):
     profile_picture=serializers.ImageField(required=False)

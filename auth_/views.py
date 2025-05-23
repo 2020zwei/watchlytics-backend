@@ -67,7 +67,7 @@ class SignUpView(CreateAPIView):
         send_mail(
             subject=email_subject,
             message=email_message,
-            from_email="info@once-more.com",
+            from_email="info@watchlytics.io",
             recipient_list=[user.email],
             fail_silently=False
         )
