@@ -37,16 +37,16 @@ def validate_no_emojis(value):
     if emoji_pattern.search(value):
         raise ValidationError(_('Product ID cannot contain emojis.'))
     
-    if not re.match(r'^[a-zA-Z0-9_-]+$', value):
-        raise ValidationError(
-            _('Product ID can only contain letters, numbers, hyphens (-), and underscores (_).')
-        )
+    # if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+    #     raise ValidationError(
+    #         _('Product ID can only contain letters, numbers, hyphens (-), and underscores (_).')
+    #     )
     
-    if value.startswith('-') or value.startswith('_'):
-        raise ValidationError(_('Product ID cannot start with a hyphen or underscore.'))
+    # if value.startswith('-') or value.startswith('_'):
+    #     raise ValidationError(_('Product ID cannot start with a hyphen or underscore.'))
     
-    if value.endswith('-') or value.endswith('_'):
-        raise ValidationError(_('Product ID cannot end with a hyphen or underscore.'))
+    # if value.endswith('-') or value.endswith('_'):
+    #     raise ValidationError(_('Product ID cannot end with a hyphen or underscore.'))
 
 
 def validate_no_emojis_on_name(value):
@@ -76,16 +76,16 @@ def validate_no_emojis_on_name(value):
     if emoji_pattern.search(value):
         raise ValidationError(_('Model Name cannot contain emojis.'))
     
-    if not re.match(r'^[a-zA-Z0-9_-]+$', value):
-        raise ValidationError(
-            _('Model Name can only contain letters, numbers, hyphens (-), and underscores (_).')
-        )
+    # if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+    #     raise ValidationError(
+    #         _('Model Name can only contain letters, numbers, hyphens (-), and underscores (_).')
+    #     )
     
-    if value.startswith('-') or value.startswith('_'):
-        raise ValidationError(_('Model Name cannot start with a hyphen or underscore.'))
+    # if value.startswith('-') or value.startswith('_'):
+    #     raise ValidationError(_('Model Name cannot start with a hyphen or underscore.'))
     
-    if value.endswith('-') or value.endswith('_'):
-        raise ValidationError(_('Model Name cannot end with a hyphen or underscore.'))
+    # if value.endswith('-') or value.endswith('_'):
+    #     raise ValidationError(_('Model Name cannot end with a hyphen or underscore.'))
 class Category(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
@@ -107,10 +107,9 @@ class Product(models.Model):
     )
     
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='products')
-    model_name = models.CharField(max_length=200, validators=[validate_no_emojis_on_name], blank=True, null=True)
+    model_name = models.CharField(max_length=200, blank=True, null=True)
     product_id = models.CharField(
-        max_length=50,
-        validators=[validate_no_emojis]
+        max_length=50
     )
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='products')
     availability = models.CharField(max_length=20, choices=AVAILABILTY_CHOICES, default='in_stock')
