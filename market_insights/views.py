@@ -44,8 +44,50 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
         page = int(request.query_params.get('page', 1))
         user = request.user
         
+        brand_filter = request.query_params.get('brand')
+        reference_number_filter = request.query_params.get('reference_number')
+        search_query = request.query_params.get('search')
+        product_id_filter = request.query_params.get('product_id')
+        model_name_filter = request.query_params.get('model_name')
+        min_buying_price = request.query_params.get('min_buying_price')
+        max_buying_price = request.query_params.get('max_buying_price')
+        
         # Get user's inventory products with all necessary fields
         inventory_products = Product.objects.filter(owner=user).select_related('category')
+        
+        # Apply filters to inventory products
+        if brand_filter:
+            inventory_products = inventory_products.filter(category__name__iexact=brand_filter)
+        
+        if reference_number_filter:
+            inventory_products = inventory_products.filter(product_id__iexact=reference_number_filter)
+        
+        if product_id_filter:
+            inventory_products = inventory_products.filter(product_id__icontains=product_id_filter)
+        
+        if model_name_filter:
+            inventory_products = inventory_products.filter(model_name__icontains=model_name_filter)
+        
+        if search_query:
+            inventory_products = inventory_products.filter(
+                Q(model_name__icontains=search_query) |
+                Q(product_id__icontains=search_query) |
+                Q(category__name__icontains=search_query)
+            )
+        
+        if min_buying_price:
+            try:
+                min_price = float(min_buying_price)
+                inventory_products = inventory_products.filter(buying_price__gte=min_price)
+            except (ValueError, TypeError):
+                pass
+        
+        if max_buying_price:
+            try:
+                max_price = float(max_buying_price)
+                inventory_products = inventory_products.filter(buying_price__lte=max_price)
+            except (ValueError, TypeError):
+                pass
         
         if not inventory_products.exists():
             return Response({
@@ -56,7 +98,7 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                 'current_page': page,
                 'page_size': page_size,
                 'results': [],
-                'message': 'No inventory products found for comparison'
+                'message': 'No inventory products found for comparison with the applied filters'
             })
         
         # Paginate inventory products
@@ -70,6 +112,8 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
             model_name = product.model_name
             buying_price = product.buying_price
             inventory_id = product.id
+            product_image = product.image.url if product.image else None
+            brand = product.category.name if product.category else None
             
             # Search market data for matches
             market_query = Q()
@@ -82,13 +126,18 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
             if model_name:
                 market_query |= Q(name__icontains=model_name)
             
+            # Search by brand if available
+            if brand:
+                market_query |= Q(brand__icontains=brand)
+            
             if not market_query:
                 # Include inventory item even if no search criteria
                 comparison_data.append({
                     'inventory_id': inventory_id,
-                    'product_id': product_id,
+                    'reference_number': product_id,
                     'model_name': model_name,
-                    'inventory_buying_price': float(buying_price) if buying_price else None,
+                    'brand': brand,
+                    'buying_price': float(buying_price) if buying_price else None,
                     'market_matches_count': 0,
                     'market_data': {
                         'avg_price': None,
@@ -96,7 +145,7 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                         'max_price': None,
                         'sources': []
                     },
-                    'sources_comparison': {},
+                    'sources': {},
                     'potential_profit': None,
                     'message': 'No search criteria available (no product_id or model_name)'
                 })
@@ -108,9 +157,12 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                 # Include inventory item even if no market data found
                 comparison_data.append({
                     'inventory_id': inventory_id,
-                    'product_id': product_id,
+                    'reference_number': product_id,
                     'model_name': model_name,
-                    'inventory_buying_price': float(buying_price) if buying_price else None,
+                    'name': sample_market_item.name if sample_market_item else None,
+                    'image_url': product_image if product_image else sample_market_item.image_url if sample_market_item else None,
+                    'brand': brand,
+                    'buying_price': float(buying_price) if buying_price else None,
                     'market_matches_count': 0,
                     'market_data': {
                         'avg_price': None,
@@ -118,7 +170,7 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                         'max_price': None,
                         'sources': []
                     },
-                    'sources_comparison': {},
+                    'sources': {},
                     'potential_profit': None,
                     'message': 'No market data found matching this product'
                 })
@@ -159,11 +211,12 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                             trend = 'down'
                         else:
                             trend = 'stable'
-                    
+
                     sources_data[source] = {
                         'avg_price': round(source_avg, 2) if source_avg else None,
                         'min_price': source_stats['min_price'],
                         'max_price': source_stats['max_price'],
+                        'price': round(source_avg, 2) if source == 'ebay' and source_avg else source_stats['min_price'],
                         'count': source_stats['count'],
                         'trend': trend
                     }
@@ -175,10 +228,14 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
             
             comparison_item = {
                 'inventory_id': inventory_id,
-                'product_id': product_id,
+                'reference_number': product_id,
                 'model_name': model_name,
-                'inventory_buying_price': float(buying_price) if buying_price else None,
+                'name': sample_market_item.name if sample_market_item else None,
+                'brand': brand,
+                'buying_price': float(buying_price) if buying_price else None,
                 'market_matches_count': market_stats['count'],
+                'image_url': product_image if product_image else sample_market_item.image_url if sample_market_item else None,
+                'sources': sources_data,
                 'market_data': {
                     'avg_price': round(market_stats['avg_price'], 2) if market_stats['avg_price'] else None,
                     'min_price': market_stats['min_price'],
@@ -188,7 +245,6 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                     'sample_brand': sample_market_item.brand if sample_market_item else None,
                     'sample_image': sample_market_item.image_url if sample_market_item else None
                 },
-                'sources_comparison': sources_data,
                 'potential_profit': potential_profit,
                 'profit_margin_percentage': round((potential_profit / float(buying_price)) * 100, 2) if potential_profit and buying_price else None
             }
@@ -202,7 +258,16 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
             'total_pages': paginator.num_pages,
             'current_page': page,
             'page_size': page_size,
-            'results': comparison_data
+            'results': comparison_data,
+            'applied_filters': {
+                'brand': brand_filter,
+                'reference_number': reference_number_filter,
+                'search': search_query,
+                'product_id': product_id_filter,
+                'model_name': model_name_filter,
+                'min_buying_price': min_buying_price,
+                'max_buying_price': max_buying_price
+            }
         })
     
     @action(detail=False, methods=['get'])
