@@ -239,37 +239,41 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
         """
         Helper method to find market data matches with prioritized search strategy
         """
-        all_matches = MarketData.objects.none()
-        
         if product_id:
             product_id = product_id.strip()
             
-            # Strategy 1: For sources with reference_number field (chrono24, bezel, grailzee)
-            # Exact reference number match (highest priority)
+            # Strategy 1: Create a single query that handles both reference_number and eBay name search
+            # For sources with reference_number field (chrono24, bezel, grailzee) - exact match first
             exact_ref_matches = MarketData.objects.filter(
                 reference_number__iexact=product_id
             ).exclude(source='ebay')
             
-            # Reference number contains product_id
+            if exact_ref_matches.exists():
+                # Add eBay matches to exact reference matches using OR condition
+                combined_query = Q(reference_number__iexact=product_id) & ~Q(source='ebay')
+                combined_query |= Q(source='ebay', name__icontains=product_id)
+                return MarketData.objects.filter(combined_query)
+            
+            # If no exact matches, try contains for reference_number sources
             ref_contains_matches = MarketData.objects.filter(
                 reference_number__icontains=product_id
             ).exclude(source='ebay')
             
-            # Strategy 2: For eBay - search in name field since they don't have reference_number
+            if ref_contains_matches.exists():
+                # Add eBay matches to contains reference matches using OR condition
+                combined_query = Q(reference_number__icontains=product_id) & ~Q(source='ebay')
+                combined_query |= Q(source='ebay', name__icontains=product_id)
+                return MarketData.objects.filter(combined_query)
+            
+            # If no reference_number matches, check if eBay has matches
             ebay_name_matches = MarketData.objects.filter(
                 source='ebay',
                 name__icontains=product_id
             )
-            
-            # Combine matches from reference_number sources and eBay name matches
-            if exact_ref_matches.exists() or ref_contains_matches.exists() or ebay_name_matches.exists():
-                # Use exact reference matches if available, otherwise use contains matches
-                ref_matches = exact_ref_matches if exact_ref_matches.exists() else ref_contains_matches
-                all_matches = ref_matches.union(ebay_name_matches) if ebay_name_matches.exists() else ref_matches
-                if all_matches.exists():
-                    return all_matches
+            if ebay_name_matches.exists():
+                return ebay_name_matches
         
-        # Strategy 3: If no reference/name matches with product_id, try model name with brand
+        # Strategy 2: If no reference/name matches with product_id, try model name with brand
         if model_name and brand:
             model_brand_matches = MarketData.objects.filter(
                 Q(name__icontains=model_name.strip()) & Q(brand__icontains=brand.strip())
@@ -277,7 +281,7 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
             if model_brand_matches.exists():
                 return model_brand_matches
         
-        # Strategy 4: Model name only (if brand matching fails)
+        # Strategy 3: Model name only (if brand matching fails)
         if model_name:
             model_matches = MarketData.objects.filter(name__icontains=model_name.strip())
             if model_matches.exists():
