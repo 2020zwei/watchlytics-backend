@@ -8,6 +8,7 @@ from django.db.models.functions import Lower
 from django.core.paginator import Paginator
 from .models import MarketData
 from .serializers import MarketDataSerializer
+from inventory.models import Product  # Import Product model from inventory
 
 class CustomPagination(PageNumberPagination):
     page_size = 20
@@ -33,6 +34,241 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['source', 'brand', 'reference_number', 'condition']
     search_fields = ['name', 'reference_number', 'brand']
     ordering_fields = ['price', 'scraped_at', 'listing_date']
+    
+    @action(detail=False, methods=['get'])
+    def inventory_based_comparison(self, request):
+        """
+        New endpoint that compares market data based on user's inventory
+        """
+        page_size = int(request.query_params.get('page_size', 20))
+        page = int(request.query_params.get('page', 1))
+        user = request.user
+        
+        brand_filter = request.query_params.get('brand')
+        reference_number_filter = request.query_params.get('reference_number')
+        search_query = request.query_params.get('search')
+        product_id_filter = request.query_params.get('product_id')
+        model_name_filter = request.query_params.get('model_name')
+        min_buying_price = request.query_params.get('min_buying_price')
+        max_buying_price = request.query_params.get('max_buying_price')
+        
+        # Get user's inventory products with all necessary fields
+        inventory_products = Product.objects.filter(owner=user).select_related('category')
+        
+        # Apply filters to inventory products
+        if brand_filter:
+            inventory_products = inventory_products.filter(category__name__iexact=brand_filter)
+        
+        if reference_number_filter:
+            inventory_products = inventory_products.filter(product_id__iexact=reference_number_filter)
+        
+        if product_id_filter:
+            inventory_products = inventory_products.filter(product_id__icontains=product_id_filter)
+        
+        if model_name_filter:
+            inventory_products = inventory_products.filter(model_name__icontains=model_name_filter)
+        
+        if search_query:
+            inventory_products = inventory_products.filter(
+                Q(model_name__icontains=search_query) |
+                Q(product_id__icontains=search_query) |
+                Q(category__name__icontains=search_query)
+            )
+        
+        if min_buying_price:
+            try:
+                min_price = float(min_buying_price)
+                inventory_products = inventory_products.filter(buying_price__gte=min_price)
+            except (ValueError, TypeError):
+                pass
+        
+        if max_buying_price:
+            try:
+                max_price = float(max_buying_price)
+                inventory_products = inventory_products.filter(buying_price__lte=max_price)
+            except (ValueError, TypeError):
+                pass
+        
+        if not inventory_products.exists():
+            return Response({
+                'next': None,
+                'previous': None,
+                'count': 0,
+                'total_pages': 0,
+                'current_page': page,
+                'page_size': page_size,
+                'results': [],
+                'message': 'No inventory products found for comparison with the applied filters'
+            })
+        
+        # Paginate inventory products
+        paginator = Paginator(inventory_products, page_size)
+        page_obj = paginator.get_page(page)
+        
+        comparison_data = []
+        
+        for product in page_obj.object_list:
+            product_id = product.product_id
+            model_name = product.model_name
+            buying_price = product.buying_price
+            inventory_id = product.id
+            product_image = product.image.url if product.image else None
+            brand = product.category.name if product.category else None
+            
+            # Search market data for matches
+            market_query = Q()
+            
+            # Search by product_id in reference_number or name fields
+            if product_id:
+                market_query |= Q(reference_number__icontains=product_id) | Q(name__icontains=product_id)
+            
+            # Search by model_name in name field
+            if model_name:
+                market_query |= Q(name__icontains=model_name)
+            
+            # Search by brand if available
+            if brand:
+                market_query |= Q(brand__icontains=brand)
+            
+            if not market_query:
+                # Include inventory item even if no search criteria
+                comparison_data.append({
+                    'inventory_id': inventory_id,
+                    'reference_number': product_id,
+                    'model_name': model_name,
+                    'brand': brand,
+                    'buying_price': float(buying_price) if buying_price else None,
+                    'market_matches_count': 0,
+                    'market_data': {
+                        'avg_price': None,
+                        'min_price': None,
+                        'max_price': None,
+                        'sources': []
+                    },
+                    'sources': {},
+                    'potential_profit': None,
+                    'message': 'No search criteria available (no product_id or model_name)'
+                })
+                continue
+                
+            market_data = MarketData.objects.filter(market_query)
+            
+            if not market_data.exists():
+                # Include inventory item even if no market data found
+                comparison_data.append({
+                    'inventory_id': inventory_id,
+                    'reference_number': product_id,
+                    'model_name': model_name,
+                    'name': sample_market_item.name if sample_market_item else None,
+                    'image_url': product_image if product_image else sample_market_item.image_url if sample_market_item else None,
+                    'brand': brand,
+                    'buying_price': float(buying_price) if buying_price else None,
+                    'market_matches_count': 0,
+                    'market_data': {
+                        'avg_price': None,
+                        'min_price': None,
+                        'max_price': None,
+                        'sources': []
+                    },
+                    'sources': {},
+                    'potential_profit': None,
+                    'message': 'No market data found matching this product'
+                })
+                continue
+            
+            # Calculate market statistics
+            market_stats = market_data.aggregate(
+                avg_price=Avg('price'),
+                min_price=Min('price'),
+                max_price=Max('price'),
+                count=Count('id')
+            )
+            
+            # Get a sample market item for additional info
+            sample_market_item = market_data.first()
+            
+            # Get sources data and compare with inventory buying price
+            sources_data = {}
+            sources_list = list(market_data.values_list('source', flat=True).distinct())
+            
+            for source in ['ebay', 'chrono24', 'bezel', 'grailzee']:
+                source_items = market_data.filter(source=source)
+                if source_items.exists():
+                    source_stats = source_items.aggregate(
+                        avg_price=Avg('price'),
+                        min_price=Min('price'),
+                        max_price=Max('price'),
+                        count=Count('id')
+                    )
+                    
+                    # Calculate trend based on inventory buying price vs market average
+                    trend = None
+                    source_avg = source_stats['avg_price']
+                    if source_avg and buying_price:
+                        if source_avg > float(buying_price) * 1.05:  # 5% threshold
+                            trend = 'up'
+                        elif source_avg < float(buying_price) * 0.95:  # 5% threshold
+                            trend = 'down'
+                        else:
+                            trend = 'stable'
+
+                    sources_data[source] = {
+                        'avg_price': round(source_avg, 2) if source_avg else None,
+                        'min_price': source_stats['min_price'],
+                        'max_price': source_stats['max_price'],
+                        'price': round(source_avg, 2) if source == 'ebay' and source_avg else source_stats['min_price'],
+                        'count': source_stats['count'],
+                        'trend': trend
+                    }
+            
+            # Calculate potential profit based on market average vs inventory buying price
+            potential_profit = None
+            if market_stats['avg_price'] and buying_price:
+                potential_profit = round(float(market_stats['avg_price']) - float(buying_price), 2)
+            
+            comparison_item = {
+                'inventory_id': inventory_id,
+                'reference_number': product_id,
+                'model_name': model_name,
+                'name': sample_market_item.name if sample_market_item else None,
+                'brand': brand,
+                'buying_price': float(buying_price) if buying_price else None,
+                'market_matches_count': market_stats['count'],
+                'image_url': product_image if product_image else sample_market_item.image_url if sample_market_item else None,
+                'sources': sources_data,
+                'market_data': {
+                    'avg_price': round(market_stats['avg_price'], 2) if market_stats['avg_price'] else None,
+                    'min_price': market_stats['min_price'],
+                    'max_price': market_stats['max_price'],
+                    'sources': sources_list,
+                    'sample_name': sample_market_item.name if sample_market_item else None,
+                    'sample_brand': sample_market_item.brand if sample_market_item else None,
+                    'sample_image': sample_market_item.image_url if sample_market_item else None
+                },
+                'potential_profit': potential_profit,
+                'profit_margin_percentage': round((potential_profit / float(buying_price)) * 100, 2) if potential_profit and buying_price else None
+            }
+            
+            comparison_data.append(comparison_item)
+        
+        return Response({
+            'next': page_obj.next_page_number() if page_obj.has_next() else None,
+            'previous': page_obj.previous_page_number() if page_obj.has_previous() else None,
+            'count': paginator.count,
+            'total_pages': paginator.num_pages,
+            'current_page': page,
+            'page_size': page_size,
+            'results': comparison_data,
+            'applied_filters': {
+                'brand': brand_filter,
+                'reference_number': reference_number_filter,
+                'search': search_query,
+                'product_id': product_id_filter,
+                'model_name': model_name_filter,
+                'min_buying_price': min_buying_price,
+                'max_buying_price': max_buying_price
+            }
+        })
     
     @action(detail=False, methods=['get'])
     def group_by_reference(self, request):

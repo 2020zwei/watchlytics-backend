@@ -22,10 +22,6 @@ from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
 from django.utils.http import urlsafe_base64_decode
 from django.shortcuts import redirect
-import sendgrid
-from sendgrid.helpers.mail import Mail, TrackingSettings, ClickTracking
-from django.template.loader import render_to_string
-from django.conf import settings
 import os
 from .serializers import (
     ForgotPasswordSerializer, 
@@ -68,19 +64,14 @@ class SignUpView(CreateAPIView):
             }
         )
 
-        message = Mail(
-            from_email="info@watchlytics.io",
-            to_emails=user.email,
+        send_mail(
             subject=email_subject,
-            html_content=email_message
+            message=email_message,
+            from_email="info@once-more.com",
+            recipient_list=[user.email],
+            fail_silently=False
         )
-        try:
-            sg = sendgrid.SendGridAPIClient(api_key=settings.EMAIL_HOST_PASSWORD)
-            response = sg.send(message)
-            return user
-        except Exception as e:
-            print(f"Error sending email: {e}")
-            raise
+        return user
 
     def generate_verification_url(self, user):
         uidb64 = urlsafe_base64_encode(force_bytes(user.pk))

@@ -3,10 +3,89 @@ from django.utils import timezone
 from auth_.models import User
 from datetime import datetime
 from django.core.validators import MinValueValidator
+import re
+from django.core.exceptions import ValidationError
+from django.utils.translation import gettext_lazy as _
 
 def product_image_path(instance, filename):
     return f'products/{instance.id}/{filename}'
 
+def validate_no_emojis(value):
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F" 
+        "\U0001F300-\U0001F5FF" 
+        "\U0001F680-\U0001F6FF" 
+        "\U0001F1E0-\U0001F1FF" 
+        "\U00002500-\U00002BEF" 
+        "\U00002702-\U000027B0"
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
+        "\U0001f926-\U0001f937"
+        "\U00010000-\U0010ffff"
+        "\u2640-\u2642"
+        "\u2600-\u2B55"
+        "\u200d"
+        "\u23cf"
+        "\u23e9"
+        "\u231a"
+        "\ufe0f"
+        "\u3030"
+        "]+", 
+        flags=re.UNICODE)
+    
+    if emoji_pattern.search(value):
+        raise ValidationError(_('Product ID cannot contain emojis.'))
+    
+    # if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+    #     raise ValidationError(
+    #         _('Product ID can only contain letters, numbers, hyphens (-), and underscores (_).')
+    #     )
+    
+    # if value.startswith('-') or value.startswith('_'):
+    #     raise ValidationError(_('Product ID cannot start with a hyphen or underscore.'))
+    
+    # if value.endswith('-') or value.endswith('_'):
+    #     raise ValidationError(_('Product ID cannot end with a hyphen or underscore.'))
+
+
+def validate_no_emojis_on_name(value):
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\U00002500-\U00002BEF"
+        "\U00002702-\U000027B0"
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
+        "\U0001f926-\U0001f937"
+        "\U00010000-\U0010ffff"
+        "\u2640-\u2642"
+        "\u2600-\u2B55"
+        "\u200d"
+        "\u23cf"
+        "\u23e9"
+        "\u231a"
+        "\ufe0f"
+        "\u3030"
+        "]+", 
+        flags=re.UNICODE)
+    
+    if emoji_pattern.search(value):
+        raise ValidationError(_('Model Name cannot contain emojis.'))
+    
+    # if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+    #     raise ValidationError(
+    #         _('Model Name can only contain letters, numbers, hyphens (-), and underscores (_).')
+    #     )
+    
+    # if value.startswith('-') or value.startswith('_'):
+    #     raise ValidationError(_('Model Name cannot start with a hyphen or underscore.'))
+    
+    # if value.endswith('-') or value.endswith('_'):
+    #     raise ValidationError(_('Model Name cannot end with a hyphen or underscore.'))
 class Category(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
@@ -29,7 +108,9 @@ class Product(models.Model):
     
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='products')
     model_name = models.CharField(max_length=200, blank=True, null=True)
-    product_id = models.CharField(max_length=50)
+    product_id = models.CharField(
+        max_length=50
+    )
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='products')
     availability = models.CharField(max_length=20, choices=AVAILABILTY_CHOICES, default='in_stock')
     
