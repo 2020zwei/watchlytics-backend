@@ -72,6 +72,34 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR(f"Error handling popup: {str(e)}"))
             return False
 
+    def extract_reference_number(self, text):
+        """Extract reference number from text using common patterns"""
+        reference_patterns = [
+            # Common reference number patterns
+            r'(?:Ref\.?\s*|Reference\s*[:#]?\s*)([A-Z0-9\-\.]{4,15})',
+            r'(?:Model\s*[:#]?\s*)([A-Z0-9\-\.]{4,15})',
+            r'\b([A-Z]{1,3}[\-\.]?\d{3,8}[\-\.]?[A-Z0-9]*)\b',  # Pattern like GMT-Master II 126710BLNR
+            r'\b(\d{4,6}[\-\.]?[A-Z]{1,4}[\-\.]?\d*)\b',  # Pattern like 116610LN
+            r'\b([A-Z]\d{4,6}[A-Z]*)\b',  # Pattern like A13356
+            # Rolex specific patterns
+            r'\b(1\d{5}[A-Z]{0,3})\b',  # 6-digit Rolex refs starting with 1
+            r'\b(m\d{5}[\-\.]?\d*)\b',  # Rolex modern refs starting with m
+        ]
+        
+        for pattern in reference_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                # Clean up the match
+                ref = match.strip().upper()
+                # Filter out common false positives
+                if (len(ref) >= 4 and 
+                    not ref.isdigit() and  # Pure numbers are usually not refs
+                    not ref in ['SIZE', 'CASE', 'DIAL', 'BAND', 'YEAR'] and
+                    not re.match(r'^\d{4}$', ref)):  # 4-digit years
+                    return ref
+        
+        return None
+
     def scrape_chrono24_page(self, driver, page_num, debug_limit=None):
         """Scrape a single page of watches"""
         page_watches = []
@@ -169,6 +197,7 @@ class Command(BaseCommand):
                     if not item_id:
                         continue
                     
+                    all_text = soup_item.get_text()
                     # Extract name
                     name_selectors = ['.text-bold', 'h2', 'h3', '.article-title', '.title', '.name']
                     name = None
@@ -210,6 +239,26 @@ class Command(BaseCommand):
                         if re.search(r'\b' + re.escape(brand_name) + r'\b', all_text, re.IGNORECASE):
                             watch_data['brand'] = brand_name
                             break
+                    
+                    reference_number = None
+                
+                    ref_label = soup_item.find('div', class_='col-xs-12', string=lambda t: 'Reference number' in str(t))
+                    if ref_label:
+                        ref_value = ref_label.find_next('div', class_='col-xs-12').find('strong')
+                        if ref_value:
+                            reference_number = ref_value.get_text(strip=True)
+                    
+                    if not reference_number:
+                        ref_text_div = soup_item.find('div', class_='text-sm text-sm-lg text-ellipsis')
+                        if ref_text_div:
+                            reference_number = ref_text_div.get_text(strip=True)
+                    
+                    if not reference_number:
+                        all_text = soup_item.get_text()
+                        reference_number = self.extract_reference_number(all_text)
+                    
+                    if reference_number:
+                        watch_data['reference_number'] = reference_number
                     
                     # Extract image
                     img_tags = soup_item.find_all('img')
@@ -347,7 +396,8 @@ class Command(BaseCommand):
             # Debug: Print first few watches
             self.stdout.write("\n=== SAMPLE EXTRACTED WATCHES ===")
             for i, watch in enumerate(watches[:5]):
-                self.stdout.write(f"Watch {i+1}: {watch.get('name', 'No name')} - ${watch.get('price', 'No price')} (Page {watch.get('page_number', '?')})")
+                ref_num = watch.get('reference_number', 'No ref')
+                self.stdout.write(f"Watch {i+1}: {watch.get('name', 'No name')} - ${watch.get('price', 'No price')} - Ref: {ref_num} (Page {watch.get('page_number', '?')})")
             
             # Save to database
             saved_count = 0
@@ -415,10 +465,12 @@ class Command(BaseCommand):
             except Exception as e:
                 self.stdout.write(self.style.WARNING(f"Could not save backup JSON: {str(e)}"))
             
+            ref_count = sum(1 for watch in watches if watch.get('reference_number'))
             self.stdout.write(self.style.SUCCESS(f'\n{"="*60}'))
             self.stdout.write(self.style.SUCCESS(f'SCRAPING SUMMARY:'))
             self.stdout.write(self.style.SUCCESS(f'- Pages scraped: {max_pages}'))
             self.stdout.write(self.style.SUCCESS(f'- Total items found: {len(watches)}'))
+            self.stdout.write(self.style.SUCCESS(f'- Items with reference numbers: {ref_count}'))
             self.stdout.write(self.style.SUCCESS(f'- New items saved: {saved_count}'))
             self.stdout.write(self.style.SUCCESS(f'- Items skipped: {skipped_count}'))
             self.stdout.write(self.style.SUCCESS(f'{"="*60}'))
