@@ -115,43 +115,8 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
             product_image = product.image.url if product.image else None
             brand = product.category.name if product.category else None
             
-            # Search market data for matches
-            market_query = Q()
-            
-            # Search by product_id in reference_number or name fields
-            if product_id:
-                market_query |= Q(reference_number__icontains=product_id) | Q(name__icontains=product_id)
-            
-            # Search by model_name in name field
-            if model_name:
-                market_query |= Q(name__icontains=model_name)
-            
-            # Search by brand if available
-            if brand:
-                market_query |= Q(brand__icontains=brand)
-            
-            if not market_query:
-                # Include inventory item even if no search criteria
-                comparison_data.append({
-                    'inventory_id': inventory_id,
-                    'reference_number': product_id,
-                    'model_name': model_name,
-                    'brand': brand,
-                    'buying_price': float(buying_price) if buying_price else None,
-                    'market_matches_count': 0,
-                    'market_data': {
-                        'avg_price': None,
-                        'min_price': None,
-                        'max_price': None,
-                        'sources': []
-                    },
-                    'sources': {},
-                    'potential_profit': None,
-                    'message': 'No search criteria available (no product_id or model_name)'
-                })
-                continue
-                
-            market_data = MarketData.objects.filter(market_query)
+            # Find market data matches with prioritized search strategy
+            market_data = self._find_market_matches(product_id, model_name, brand)
             
             if not market_data.exists():
                 # Include inventory item even if no market data found
@@ -159,8 +124,8 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                     'inventory_id': inventory_id,
                     'reference_number': product_id,
                     'model_name': model_name,
-                    'name': sample_market_item.name if sample_market_item else None,
-                    'image_url': product_image if product_image else sample_market_item.image_url if sample_market_item else None,
+                    'name': None,
+                    'image_url': product_image,
                     'brand': brand,
                     'buying_price': float(buying_price) if buying_price else None,
                     'market_matches_count': 0,
@@ -269,6 +234,44 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                 'max_buying_price': max_buying_price
             }
         })
+    
+    def _find_market_matches(self, product_id, model_name, brand):
+        """
+        Helper method to find market data matches with prioritized search strategy
+        """
+        # Strategy 1: Exact reference number match (highest priority)
+        if product_id:
+            exact_matches = MarketData.objects.filter(reference_number__iexact=product_id.strip())
+            if exact_matches.exists():
+                return exact_matches
+            
+            # Strategy 2: Reference number contains product_id
+            ref_contains_matches = MarketData.objects.filter(reference_number__icontains=product_id.strip())
+            if ref_contains_matches.exists():
+                return ref_contains_matches
+        
+        # Strategy 3: If no reference number matches, try model name with brand
+        if model_name and brand:
+            model_brand_matches = MarketData.objects.filter(
+                Q(name__icontains=model_name.strip()) & Q(brand__icontains=brand.strip())
+            )
+            if model_brand_matches.exists():
+                return model_brand_matches
+        
+        # Strategy 4: Model name only (if brand matching fails)
+        if model_name:
+            model_matches = MarketData.objects.filter(name__icontains=model_name.strip())
+            if model_matches.exists():
+                return model_matches
+        
+        # Strategy 5: Last resort - search in name field for product_id
+        if product_id:
+            name_matches = MarketData.objects.filter(name__icontains=product_id.strip())
+            if name_matches.exists():
+                return name_matches
+        
+        # Return empty queryset if no matches found
+        return MarketData.objects.none()
     
     @action(detail=False, methods=['get'])
     def group_by_reference(self, request):
