@@ -28,78 +28,75 @@ class DashboardAPIView(APIView):
     def get(self, request):
         user = request.user
         
-        # Get all products for the user
-        all_products = Product.objects.filter(owner=user)
+        # Get all sale transactions for the user
+        sale_transactions = TransactionHistory.objects.filter(
+            user=user,
+            transaction_type='sale'
+        ).prefetch_related('transaction_items')
         
-        # Calculate total profit, revenue and sales
-        total_profit = all_products.filter(
-            availability='sold'
-        ).aggregate(
-            total=Coalesce(Sum('profit'), 0, output_field=DecimalField())
-        )['total'] or 0
+        # Calculate total profit, revenue and sales from transactions
+        total_profit = Decimal('0')
+        revenue = Decimal('0')
+        sales_count = 0
+        net_sales_value = Decimal('0')
         
-        revenue = all_products.filter(availability='sold').aggregate(
-            total=Coalesce(Sum('sold_price'), 0, output_field=DecimalField())
-        )['total'] or 0
+        for transaction in sale_transactions:
+            total_profit += transaction.profit or Decimal('0')
+            revenue += transaction.total_sale_price or Decimal('0')
+            net_sales_value += transaction.total_sale_price or Decimal('0')
+            sales_count += transaction.transaction_items.count()
         
-        sales_count = all_products.filter(availability='sold').count()
-        
-        # Calculate net purchase value
-        net_purchase_value = all_products.aggregate(
-            total=Coalesce(Sum('buying_price'), 0, output_field=DecimalField())
-        )['total'] or 0
-        
-        # Calculate net sales value
-        net_sales_value = all_products.filter(availability='sold').aggregate(
-            total=Coalesce(Sum('sold_price'), 0, output_field=DecimalField())
-        )['total'] or 0
+        # Calculate net purchase value from all products
+        net_purchase_value = Product.objects.filter(owner=user).aggregate(
+            total=Coalesce(Sum('buying_price'), Decimal('0'), output_field=DecimalField())
+        )['total'] or Decimal('0')
         
         # Month over month profit
         current_month = timezone.now().month
         current_year = timezone.now().year
         
-        current_month_profit = all_products.filter(
-            date_sold__month=current_month,
-            date_sold__year=current_year,
-            availability='sold'
-        ).aggregate(
-            total=Coalesce(Sum('profit'), 0, output_field=DecimalField())
-        )['total'] or 0
+        current_month_profit = Decimal('0')
+        current_month_sales = sale_transactions.filter(
+            date__month=current_month,
+            date__year=current_year
+        )
+        for transaction in current_month_sales:
+            current_month_profit += transaction.profit or Decimal('0')
         
         previous_month = (timezone.now().replace(day=1) - timedelta(days=1))
         previous_month_number = previous_month.month
         previous_month_year = previous_month.year
         
-        previous_month_profit = all_products.filter(
-            date_sold__month=previous_month_number,
-            date_sold__year=previous_month_year,
-            availability='sold'
-        ).aggregate(
-            total=Coalesce(Sum('profit'), 0, output_field=DecimalField())
-        )['total'] or 0
+        previous_month_profit = Decimal('0')
+        previous_month_sales = sale_transactions.filter(
+            date__month=previous_month_number,
+            date__year=previous_month_year
+        )
+        for transaction in previous_month_sales:
+            previous_month_profit += transaction.profit or Decimal('0')
         
         mom_profit = current_month_profit - previous_month_profit
         
         # Year over year profit
         last_year = current_year - 1
         
-        current_year_profit = all_products.filter(
-            date_sold__year=current_year,
-            availability='sold'
-        ).aggregate(
-            total=Coalesce(Sum('profit'), 0, output_field=DecimalField())
-        )['total'] or 0
+        current_year_profit = Decimal('0')
+        current_year_sales = sale_transactions.filter(
+            date__year=current_year
+        )
+        for transaction in current_year_sales:
+            current_year_profit += transaction.profit or Decimal('0')
         
-        previous_year_profit = all_products.filter(
-            date_sold__year=last_year,
-            availability='sold'
-        ).aggregate(
-            total=Coalesce(Sum('profit'), 0, output_field=DecimalField())
-        )['total'] or 0
+        previous_year_profit = Decimal('0')
+        previous_year_sales = sale_transactions.filter(
+            date__year=last_year
+        )
+        for transaction in previous_year_sales:
+            previous_year_profit += transaction.profit or Decimal('0')
         
         yoy_profit = current_year_profit - previous_year_profit
         
-        # Return formatted data matching the UI in the images
+        # Return formatted data
         return Response({
             'total_profit': float(total_profit),
             'revenue': float(revenue),
