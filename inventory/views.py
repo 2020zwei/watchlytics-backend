@@ -496,15 +496,57 @@ class ProductCSVUploadAPIView(APIView):
                         'wholesale_price': total_cost,
                     }
 
+                    product = None
                     if existing_product:
                         for key, value in product_data.items():
                             setattr(existing_product, key, value)
                         existing_product.save()
+                        product = existing_product
                         updated += 1
                     else:
-                        Product.objects.create(**product_data)
+                        product = Product.objects.create(**product_data)
                         created += 1
-                        
+                    
+                    # Create transaction if sell price and sold date are present
+                    if sell_price and sold_date:
+                        # Check if a transaction already exists for this product
+                        if not TransactionItem.objects.filter(product=product).exists():
+                            transaction_data = {
+                                'user': user,
+                                'name_of_trade': f"{product.model_name} Transaction",
+                                'transaction_type': 'sale',
+                                'date': sold_date,
+                                'purchase_price': buy_price,
+                                'sale_price': sell_price,
+                                'expenses': {'repair_cost': float(repair_cost)} if repair_cost else {},
+                            }
+                            
+                            # Get customer if available
+                            sold_to = normalized_row.get('Sold To')
+                            if sold_to:
+                                customer, _ = Customer.objects.get_or_create(
+                                    name=sold_to,
+                                    defaults={'user': user}
+                                )
+                                transaction_data['customer'] = customer
+                            
+                            # Set sale category if available
+                            sale_category = normalized_row.get('Sale Category')
+                            if sale_category and sale_category.lower() in [choice[0] for choice in TransactionHistory.SALE_CATEGORY_CHOICES]:
+                                transaction_data['sale_category'] = sale_category.lower()
+                            
+                            # Create transaction first
+                            transaction_obj = TransactionHistory.objects.create(**transaction_data)
+                            
+                            # Then create transaction item
+                            TransactionItem.objects.create(
+                                transaction=transaction_obj,
+                                product=product,
+                                quantity=1,
+                                purchase_price=buy_price,
+                                sale_price=sell_price
+                            )
+                    
             except Exception as e:
                 errors.append({'row': index, 'error': str(e)})
 
