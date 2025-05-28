@@ -508,17 +508,65 @@ class ProductCSVUploadAPIView(APIView):
                         created += 1
                     
                     # Create transaction if sell price and sold date are present
-                    if sell_price and sold_date:
-                        # Check if a transaction already exists for this product
-                        if not TransactionItem.objects.filter(product=product).exists():
-                            transaction_data = {
+                    if buy_price and date_purchased:
+                        # Check if a purchase transaction already exists for this product
+                        if not TransactionItem.objects.filter(
+                            product=product, 
+                            transaction__transaction_type='purchase'
+                        ).exists():
+                            purchase_transaction_data = {
                                 'user': user,
-                                'name_of_trade': f"{product.model_name} Transaction",
+                                'name_of_trade': f"{product.model_name} Purchase",
+                                'transaction_type': 'purchase',
+                                'date': date_purchased,
+                                'purchase_price': buy_price,
+                                'expenses': {
+                                    'shipping': float(shipping_price) if shipping_price else 0,
+                                    'repair_cost': float(repair_cost) if repair_cost else 0
+                                }
+                            }
+                            
+                            # Get supplier if available
+                            bought_from = normalized_row.get('Bought From')
+                            if bought_from:
+                                supplier, _ = Customer.objects.get_or_create(
+                                    name=bought_from,
+                                    defaults={
+                                        'user': user,
+                                        'is_supplier': True
+                                    }
+                                )
+                                purchase_transaction_data['customer'] = supplier
+                            
+                            # Create purchase transaction
+                            purchase_transaction = TransactionHistory.objects.create(
+                                **purchase_transaction_data
+                            )
+                            
+                            # Create purchase transaction item
+                            TransactionItem.objects.create(
+                                transaction=purchase_transaction,
+                                product=product,
+                                quantity=product.quantity or 1,
+                                purchase_price=buy_price
+                            )
+                    
+                    # Create sale transaction if sell price and sold date are present
+                    if sell_price and sold_date:
+                        # Check if a sale transaction already exists for this product
+                        if not TransactionItem.objects.filter(
+                            product=product, 
+                            transaction__transaction_type='sale'
+                        ).exists():
+                            sale_transaction_data = {
+                                'user': user,
+                                'name_of_trade': f"{product.model_name} Sale",
                                 'transaction_type': 'sale',
                                 'date': sold_date,
-                                'purchase_price': buy_price,
                                 'sale_price': sell_price,
-                                'expenses': {'repair_cost': float(repair_cost)} if repair_cost else {},
+                                'expenses': {
+                                    'repair_cost': float(repair_cost) if repair_cost else 0
+                                }
                             }
                             
                             # Get customer if available
@@ -528,23 +576,25 @@ class ProductCSVUploadAPIView(APIView):
                                     name=sold_to,
                                     defaults={'user': user}
                                 )
-                                transaction_data['customer'] = customer
+                                sale_transaction_data['customer'] = customer
                             
                             # Set sale category if available
                             sale_category = normalized_row.get('Sale Category')
                             if sale_category and sale_category.lower() in [choice[0] for choice in TransactionHistory.SALE_CATEGORY_CHOICES]:
-                                transaction_data['sale_category'] = sale_category.lower()
+                                sale_transaction_data['sale_category'] = sale_category.lower()
                             
-                            # Create transaction first
-                            transaction_obj = TransactionHistory.objects.create(**transaction_data)
+                            # Create sale transaction
+                            sale_transaction = TransactionHistory.objects.create(
+                                **sale_transaction_data
+                            )
                             
-                            # Then create transaction item
+                            # Create sale transaction item
                             TransactionItem.objects.create(
-                                transaction=transaction_obj,
+                                transaction=sale_transaction,
                                 product=product,
                                 quantity=1,
-                                purchase_price=buy_price,
-                                sale_price=sell_price
+                                sale_price=sell_price,
+                                purchase_price=buy_price  # Include original purchase price
                             )
                     
             except Exception as e:
