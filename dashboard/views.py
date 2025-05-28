@@ -68,13 +68,18 @@ class ExpenseTrackingAPIView(APIView):
         user = request.user
         
         today = timezone.now().date()
-        six_months_ago = today - timedelta(days=180)
+        current_month_start = today.replace(day=1)
         
         monthly_data = []
         
         for i in range(6):
-            month_date = today.replace(day=1) - timedelta(days=i*30)
-            month_start = month_date.replace(day=1)
+            month_year = today.year
+            month_num = today.month - i
+            while month_num < 1:
+                month_num += 12
+                month_year -= 1
+            
+            month_start = current_month_start.replace(year=month_year, month=month_num)
             
             if month_start.month == 12:
                 next_month_start = month_start.replace(year=month_start.year + 1, month=1)
@@ -125,10 +130,11 @@ class ExpenseTrackingAPIView(APIView):
             
             monthly_data.append({
                 'month': f"{month_name[month_start.month]} {month_start.year}",
-                'sales': sales_amount,
-                'purchases': purchase_amount
+                'sales': float(sales_amount),
+                'purchases': float(purchase_amount)
             })
         
+        # Reverse to show oldest first
         monthly_data.reverse()
         
         return Response(monthly_data, status=status.HTTP_200_OK)
