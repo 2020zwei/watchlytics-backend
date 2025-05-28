@@ -358,13 +358,14 @@ class StockAgingAPIView(APIView):
         
         for product in products:
             # Create a unique group key based on brand and model
-            group_key = f"{product.category.name if product.category else 'Other'}-{product.model_name}"
+            brand_name = product.category.name if product.category else 'Other'
+            group_key = f"{brand_name}-{product.model_name}"
             
             if group_key not in stock_groups:
                 stock_count += 1
                 stock_groups[group_key] = {
                     'stock_ref': f"STK{stock_count:03d}",
-                    'brand': product.category.name if product.category else 'Other',
+                    'brand': brand_name,
                     'model_name': product.model_name,
                     'less_than_30': 0,
                     '30_to_60': 0,
@@ -438,7 +439,6 @@ class StockAgingAPIView(APIView):
                 'total': sum(group['total'] for group in stock_aging_data)
             }
         })
-
 
 class MonthlyProfitAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
