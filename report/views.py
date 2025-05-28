@@ -8,12 +8,13 @@ from django.db.models import Sum, Count, F, Q, Avg, Case, When, Value, IntegerFi
 from django.db.models.functions import TruncMonth, TruncYear, TruncWeek, Coalesce
 from django.utils import timezone
 from datetime import datetime, timedelta
+from decimal import Decimal
 from inventory.models import Product, Category
 from .serializers import ProductSerializer, CategorySerializer, DashboardStatsSerializer
 import calendar
 from django.db.models.functions import Cast
 from django.db.models import CharField, Case, When, Value, Q
-
+from transactions.models import TransactionHistory
 
 class CustomPagination(PageNumberPagination):
     page_size = 20
@@ -117,86 +118,73 @@ class BestSellingProductsAPIView(APIView):
     def get(self, request):
         user = request.user
         
-        # Get products sold
-        sold_products = (
-            Product.objects
-            .filter(owner=user, availability='sold')
-            .select_related('category')
-        )
+        # Get all sale transactions for the user
+        sale_transactions = TransactionHistory.objects.filter(
+            user=user,
+            transaction_type='sale'
+        ).prefetch_related('transaction_items__product')
         
-        # For debugging - log the count of sold products
-        sold_count = sold_products.count()
-        print(f"DEBUG: Found {sold_count} sold products for user {user.id}")
+        # Create a dictionary to aggregate product sales
+        product_sales = {}
         
-        # Process products and build response
+        for transaction in sale_transactions:
+            for item in transaction.transaction_items.all():
+                product = item.product
+                
+                # Use product_id or id as the key
+                product_key = product.product_id or str(product.id)
+                
+                if product_key not in product_sales:
+                    product_sales[product_key] = {
+                        'product': product.model_name or 'Unknown Product',
+                        'reference_number': product_key,
+                        'brand': product.category.name if product.category else 'Uncategorized',
+                        'total_quantity_sold': 0,
+                        'total_turn_over': Decimal('0'),
+                        'buying_price': item.purchase_price or Decimal('0'),
+                        'sold_price': item.sale_price or Decimal('0'),
+                    }
+                
+                # Update aggregated values
+                product_sales[product_key]['total_quantity_sold'] += item.quantity
+                product_sales[product_key]['total_turn_over'] += (item.sale_price or Decimal('0')) * item.quantity
+                
+                # For products with multiple transactions, we'll take the latest buying/sold price
+                product_sales[product_key]['buying_price'] = item.purchase_price or product_sales[product_key]['buying_price']
+                product_sales[product_key]['sold_price'] = item.sale_price or product_sales[product_key]['sold_price']
+        
+        # Convert the dictionary to a list and calculate remaining quantity and profit margin
         best_selling = []
-        for product in sold_products:
-            # Relaxed condition - don't require category
-            if product.model_name or getattr(product, 'name', None):  # Handle possible field name variations
-                model_name = product.model_name or getattr(product, 'name', 'Unknown Product')
-                product_id = product.product_id or getattr(product, 'id', 'Unknown ID')
-                
-                # Calculate remaining quantity for this product_id
-                remaining_query = Product.objects.filter(
+        for product_key, data in product_sales.items():
+            # Get the product to check remaining quantity
+            try:
+                product = Product.objects.get(
                     owner=user,
-                    # availability='in_stock'
+                    product_id=product_key if product_key != 'Unknown ID' else None
                 )
-                
-                # Filter by product_id if available
-                if product_id and product_id != 'Unknown ID':
-                    remaining_query = remaining_query.filter(product_id=product_id)
-                elif model_name and model_name != 'Unknown Product':
-                    remaining_query = remaining_query.filter(model_name=model_name)
-                    
-                remaining_quantity = remaining_query.aggregate(
-                    remaining=Coalesce(Sum('quantity'), 0, output_field=IntegerField())
-                )['remaining']
-                
-                # Safely get buying_price and sold_price
-                buying_price = getattr(product, 'buying_price', 0) or 0
-                sold_price = getattr(product, 'sold_price', 0) or 0
-                
-                # Calculate increase percentage (profit margin)
-                increase_by = 0
-                if buying_price and buying_price > 0 and sold_price:
-                    increase_by = ((sold_price - buying_price) / buying_price) * 100
-                    increase_by = round(increase_by, 1)
-                
-                # Get category name safely
-                category_name = 'Uncategorized'
-                if hasattr(product, 'category') and product.category:
-                    category_name = product.category.name
-                
-                # Build product data dictionary matching UI format
-                product_data = {
-                    'product': model_name,
-                    'reference_number': product_id,
-                    'brand': category_name,
-                    'remaining_quantity': remaining_quantity,
-                    'turn_over': float(sold_price),
-                    'increase_by': increase_by,
-                }
-                
-                best_selling.append(product_data)
-        
-        # For debugging - log how many products we're including
-        print(f"DEBUG: Including {len(best_selling)} products in best_selling response")
-        
-        # If still empty, add a sample product to ensure UI can display something
-        if not best_selling and sold_count == 0:
-            # This is just a fallback for testing - remove in production
+                remaining_quantity = product.quantity
+            except Product.DoesNotExist:
+                remaining_quantity = 0
+            
+            # Calculate profit margin
+            buying_price = data['buying_price']
+            sold_price = data['sold_price']
+            increase_by = 0
+            if buying_price and buying_price > 0 and sold_price:
+                increase_by = ((sold_price - buying_price) / buying_price) * 100
+                increase_by = round(increase_by, 1)
+            
             best_selling.append({
-                'product': 'Sample Product',
-                'product_id': 'SAMPLE001',
-                'category': 'Sample Category',
-                'remaining_quantity': 0,
-                'turn_over': 0.0,
-                'increase_by': 0.0
+                'product': data['product'],
+                'reference_number': data['reference_number'],
+                'brand': data['brand'],
+                'remaining_quantity': remaining_quantity,
+                'turn_over': float(data['total_turn_over']),
+                'increase_by': increase_by,
             })
         
-        # Sort by profit margin (increase_by) in descending order
-        if best_selling:
-            best_selling.sort(key=lambda x: x['increase_by'], reverse=True)
+        # Sort by turn_over in descending order (you can change to increase_by if preferred)
+        best_selling.sort(key=lambda x: x['turn_over'], reverse=True)
         
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(best_selling, request)
@@ -243,10 +231,12 @@ class ExpenseReportAPIView(APIView):
             total_cost = purchase_cost + repairs_cost + shipping_cost
 
             impact = ((repairs_cost + shipping_cost) / total_cost) * 100 if total_cost > 0 else 0
+            brand = getattr(getattr(first_product, 'category', None), 'name', None)
 
             product_expenses.append({
-                'product': model_name,
+                'model': model_name,
                 'reference_number': first_product.product_id,
+                'brand': brand,
                 'purchase_price': float(purchase_cost),
                 'repairs': float(repairs_cost),
                 'shipping': float(shipping_cost),

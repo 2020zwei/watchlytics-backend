@@ -22,7 +22,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from django.db import transaction
 from transactions.models import TransactionHistory, TransactionItem
-
+from customers.models import Customer
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
