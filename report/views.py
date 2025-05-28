@@ -840,8 +840,8 @@ class PurchaseSalesReportAPIView(APIView):
                 'sale': float(sales)
             })
         
-        total_purchases = sum(m['purchases'] for m in months_data)
-        total_sales = sum(m['sales'] for m in months_data)
+        total_purchases = sum(m['purchase'] for m in months_data)
+        total_sales = sum(m['sale'] for m in months_data)
         
         response_data = {
             'summary': {
