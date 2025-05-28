@@ -835,8 +835,9 @@ class PurchaseSalesReportAPIView(APIView):
             
             months_data.append({
                 'month': month_start.strftime('%b'),  # Short month name
-                'purchases': float(purchases),
-                'sales': float(sales)
+                'date': month_start.strftime('%b'),
+                'purchase': float(purchases),
+                'sale': float(sales)
             })
         
         total_purchases = sum(m['purchases'] for m in months_data)
