@@ -7,14 +7,16 @@ from rest_framework.pagination import PageNumberPagination
 from django.db.models import Sum, Count, F, Q, Avg, Case, When, Value, IntegerField, DecimalField, FloatField
 from django.db.models.functions import TruncMonth, TruncYear, TruncWeek, Coalesce
 from django.utils import timezone
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from decimal import Decimal
 from inventory.models import Product, Category
 from .serializers import ProductSerializer, CategorySerializer, DashboardStatsSerializer
 import calendar
 from django.db.models.functions import Cast
 from django.db.models import CharField, Case, When, Value, Q
-from transactions.models import TransactionHistory
+from transactions.models import TransactionHistory, TransactionItem
+from rest_framework.permissions import AllowAny, IsAuthenticated
+
 
 class CustomPagination(PageNumberPagination):
     page_size = 20
@@ -627,116 +629,235 @@ class LiveInventoryAPIView(APIView):
 
 
 class PurchaseSalesReportAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     
     def get(self, request):
         """
-        Get purchase and sales report by time period
-        as shown in the UI screenshot
+        Get purchase and sales report with period filtering (month/week)
         """
         user = request.user
-        period = request.query_params.get('period', 'week')  # week, month, quarter, year
+        period = request.query_params.get('period', 'month')  # month or week
         
-        # Set up date filter based on period
         today = timezone.now().date()
-        end_date = today
+        
+        def get_sales_total(queryset):
+
+            transaction_total = queryset.aggregate(
+                total=Coalesce(Sum('sale_price'), Decimal('0'))
+            )['total']
+            
+            items_total = TransactionItem.objects.filter(
+                transaction__in=queryset
+            ).aggregate(
+                total=Coalesce(Sum(F('quantity') * F('sale_price')), Decimal('0'))
+            )['total']
+            
+            return max(transaction_total, items_total)
+        
+        def get_purchases_total(queryset):
+            transaction_total = queryset.aggregate(
+                total=Coalesce(Sum('purchase_price'), Decimal('0'))
+            )['total']
+            
+            items_total = TransactionItem.objects.filter(
+                transaction__in=queryset
+            ).aggregate(
+                total=Coalesce(Sum(F('quantity') * F('purchase_price')), Decimal('0'))
+            )['total']
+            
+            return max(transaction_total, items_total)
         
         if period == 'week':
-            # Get data for the past 6 months by week
-            start_date = today - timedelta(days=180)
-            trunc_function = TruncWeek
-        elif period == 'month':
-            # Get data for the past year by month
-            start_date = today - timedelta(days=365)
-            trunc_function = TruncMonth
-        elif period == 'quarter':
-            # Get data for the past 2 years by quarter
-            start_date = today - timedelta(days=730)
-            trunc_function = TruncMonth  # We'll group by quarter manually
-        else:  # year
-            # Get data for the past 5 years by year
-            start_date = today - timedelta(days=1825)
-            trunc_function = TruncYear
-        
-        # Get purchases in period
-        purchases = Product.objects.filter(
-            owner=user,
-            date_purchased__gte=start_date,
-            date_purchased__lte=end_date
-        ).annotate(
-            period_date=trunc_function('date_purchased')
-        ).values('period_date').annotate(
-            count=Count('id'),
-            value=Coalesce(Sum('buying_price'), 0, output_field=DecimalField())
-        ).order_by('period_date')
-        
-        # Get sales in period
-        sales = Product.objects.filter(
-            owner=user,
-            date_sold__gte=start_date,
-            date_sold__lte=end_date,
-            availability='sold'
-        ).annotate(
-            period_date=trunc_function('date_sold')
-        ).values('period_date').annotate(
-            count=Count('id'),
-            value=Coalesce(Sum('sold_price'), 0, output_field=DecimalField())
-        ).order_by('period_date')
-        
-        # Format data for chart display as shown in UI
-        chart_data = []
-        
-        # Combine purchases and sales data
-        all_dates = set()
-        for item in purchases:
-            all_dates.add(item['period_date'])
-        for item in sales:
-            all_dates.add(item['period_date'])
-        
-        all_dates = sorted(all_dates)
-        
-        # Create a combined dataset
-        for date in all_dates:
-            # Format the date label based on period
-            if period == 'week':
-                date_label = date.strftime('%d %b')
-            elif period == 'month' or period == 'quarter':
-                month_name = calendar.month_name[date.month][:3]  # Abbreviated month name
-                date_label = f"{month_name}"
-            else:  # year
-                date_label = str(date.year)
+            # Get data for the last 12 weeks
+            start_date = today - timedelta(weeks=12)
             
-            # Find purchase and sale for this date
-            purchase_value = 0
-            for p in purchases:
-                if p['period_date'] == date:
-                    purchase_value = float(p['value'])
-                    break
-                    
-            sale_value = 0
-            for s in sales:
-                if s['period_date'] == date:
-                    sale_value = float(s['value'])
-                    break
-            
-            chart_data.append({
-                'date': date_label,
-                'purchase': purchase_value,
-                'sale': sale_value
-            })
-        
-        # For the current month highlight
-        current_month = calendar.month_name[today.month]
-        
-        # Return empty array check
-        if not chart_data:
             chart_data = []
+            for i in range(12, -1, -1):
+                week_start = today - timedelta(weeks=i)
+                week_end = week_start + timedelta(days=6)
+                
+                sales_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__gte=week_start,
+                    date__lte=week_end
+                )
+                sales = get_sales_total(sales_transactions)
+                
+                # Get purchases
+                purchase_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='purchase',
+                    date__gte=week_start,
+                    date__lte=week_end
+                )
+                purchases = get_purchases_total(purchase_transactions)
+                
+                chart_data.append({
+                    'period': f"Week {week_start.isocalendar()[1]}",  # Week number
+                    'purchases': float(purchases),
+                    'sales': float(sales)
+                })
             
+            current_period_sales = get_sales_total(
+                TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__week=today.isocalendar()[1],
+                    date__year=today.year
+                )
+            )
+            
+        else: 
+            chart_data = []
+            for i in range(6, -1, -1):
+                month = today.month - i
+                year = today.year
+                while month < 1:
+                    month += 12
+                    year -= 1
+                
+                month_start = date(year, month, 1)
+                if month == 12:
+                    month_end = date(year+1, 1, 1)
+                else:
+                    month_end = date(year, month+1, 1)
+                
+                sales_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__gte=month_start,
+                    date__lt=month_end
+                )
+                sales = get_sales_total(sales_transactions)
+                
+                purchase_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='purchase',
+                    date__gte=month_start,
+                    date__lt=month_end
+                )
+                purchases = get_purchases_total(purchase_transactions)
+                
+                chart_data.append({
+                    'period': month_start.strftime('%b'),  # Month abbreviation
+                    'purchases': float(purchases),
+                    'sales': float(sales)
+                })
+            
+            current_period_sales = get_sales_total(
+                TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__month=today.month,
+                    date__year=today.year
+                )
+            )
+        
+        total_purchases = sum(period['purchases'] for period in chart_data)
+        total_sales = sum(period['sales'] for period in chart_data)
+        
         return Response({
-            'period': period,
+            'summary': {
+                'purchases': {
+                    'total': total_purchases,
+                    'periods': [period['period'] for period in chart_data]
+                },
+                'sales': {
+                    'total': total_sales,
+                    'view_type': period
+                }
+            },
             'chart_data': chart_data,
-            'current_month': {
-                'month': current_month,
-                'value': "220,342,123"  # Hardcoded from UI for demo
+            'current_period': {
+                'period': today.strftime('%b') if period == 'month' else f"Week {today.isocalendar()[1]}",
+                'value': format(current_period_sales, ',.0f')
             }
         })
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        view_type = request.query_params.get('view', 'month')  # month or week
+        
+        today = timezone.now().date()
+        current_month = today.month
+        current_year = today.year
+        
+        def get_sales_total(queryset):
+            return queryset.aggregate(
+                total=Coalesce(Sum('sale_price'), Decimal('0'))
+            )['total']
+        
+        def get_purchases_total(queryset):
+            return queryset.aggregate(
+                total=Coalesce(Sum('purchase_price'), Decimal('0'))
+            )['total']
+        
+        # Calculate totals for the current month from transactions
+        current_month_transactions = TransactionHistory.objects.filter(
+            user=user,
+            transaction_type='sale',
+            date__month=current_month,
+            date__year=current_year
+        )
+        current_month_sales = get_sales_total(current_month_transactions)
+        
+        months_data = []
+        for i in range(6, -1, -1): 
+            month = today.month - i
+            year = today.year
+            while month < 1:
+                month += 12
+                year -= 1
+            
+            month_start = date(year, month, 1)
+            if month == 12:
+                month_end = date(year+1, 1, 1)
+            else:
+                month_end = date(year, month+1, 1)
+            
+            sales_transactions = TransactionHistory.objects.filter(
+                user=user,
+                transaction_type='sale',
+                date__gte=month_start,
+                date__lt=month_end
+            )
+            sales = get_sales_total(sales_transactions)
+            
+            purchase_transactions = TransactionHistory.objects.filter(
+                user=user,
+                transaction_type='purchase',
+                date__gte=month_start,
+                date__lt=month_end
+            )
+            purchases = get_purchases_total(purchase_transactions)
+            
+            months_data.append({
+                'month': month_start.strftime('%b'),  # Short month name
+                'purchases': float(purchases),
+                'sales': float(sales)
+            })
+        
+        total_purchases = sum(m['purchases'] for m in months_data)
+        total_sales = sum(m['sales'] for m in months_data)
+        
+        response_data = {
+            'summary': {
+                'purchases': {
+                    'total': total_purchases,
+                    'months': [m['month'] for m in months_data]  # All months
+                },
+                'sales': {
+                    'total': total_sales,
+                    'view_type': view_type  # "month" or "week"
+                }
+            },
+            'chart_data': months_data,
+            'current_month': {
+                'month': today.strftime('%b'),
+                'value': format(current_month_sales, ',.0f')  # Formatted with commas
+            }
+        }
+        
+        return Response(response_data)
