@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import Category, Product
-from .serializers import CategorySerializer, ProductSerializer, ProductCreateSerializer
+from .serializers import CategorySerializer, ProductSerializer, ProductCreateSerializer, BulkProductSoldSerializer
 from rest_framework.permissions import AllowAny
 from io import TextIOWrapper
 from inventory.models import Product, Category
@@ -652,3 +652,37 @@ class ProductCSVUploadAPIView(APIView):
             'repair': 'in_repair'
         }
         return mapping.get(deal_status.lower(), 'in_stock')
+    
+class BulkMarkProductsSoldView(APIView):
+    def post(self, request, *args, **kwargs):
+
+        serializer = BulkProductSoldSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            product_ids = [int(str(pid).strip()) for pid in serializer.validated_data['product_ids']]
+        except ValueError:
+            return Response({
+                'status': 'error',
+                'message': 'Invalid product ID format'
+            }, status=400)
+        
+        try:
+            with transaction.atomic():
+                updated_count = Product.objects.filter(id__in=product_ids).update(
+                    is_sold=True,
+                    availability='sold',
+                    date_sold=datetime.now()
+                )
+                
+                return Response({
+                    'status': 'success' if updated_count > 0 else 'no_match',
+                    'message': f'Found and updated {updated_count} product(s)',
+                    'updated_count': updated_count,
+                    'requested_ids': product_ids
+                })
+                
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=500)

@@ -141,3 +141,15 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     
 class ProductCSVUploadSerializer(serializers.Serializer):
     csv_file = serializers.FileField()
+
+class BulkProductSoldSerializer(serializers.Serializer):
+    product_ids = serializers.ListField(
+        child=serializers.CharField(),
+        required=True,
+        help_text="List of product IDs to mark as sold"
+    )
+
+    def validate_product_ids(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one product ID is required")
+        return value
