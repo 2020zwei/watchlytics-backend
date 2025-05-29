@@ -37,6 +37,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         user = self.request.user
         queryset = Product.objects.filter(owner=user)
         
+        search = self.request.query_params.get('search')
         brands = self.request.query_params.getlist('brand')
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
@@ -49,6 +50,25 @@ class ProductViewSet(viewsets.ModelViewSet):
         
         if is_transaction:
             queryset = queryset.filter(quantity__gt=0)
+        
+        # Global search functionality
+        if search:
+            search_terms = search.strip().split()
+            if search_terms:
+                search_filters = []
+                for term in search_terms:
+                    term_filter = (
+                        Q(model_name__icontains=term) | 
+                        Q(product_id__icontains=term) | 
+                        Q(category__name__icontains=term)
+                    )
+                    search_filters.append(term_filter)
+                
+                if search_filters:
+                    combined_search_filter = search_filters[0]
+                    for filter_item in search_filters[1:]:
+                        combined_search_filter &= filter_item
+                    queryset = queryset.filter(combined_search_filter)
         
         if brands:
             brand_queries = []
@@ -115,7 +135,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             ).order_by('zero_quantity', '-created_at')
         
         return queryset
-    
+
     def get_serializer_class(self):
         if self.action == 'create':
             return ProductCreateSerializer
