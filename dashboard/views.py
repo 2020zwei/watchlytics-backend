@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from calendar import month_name
 from decimal import Decimal
 from transactions.models import TransactionHistory, TransactionItem
+from django.db.models.functions import Coalesce
 from inventory.models import Product
 from .serializers import (
     DashboardStatsSerializer, 
@@ -22,43 +23,37 @@ class DashboardStatsAPIView(APIView):
     def get(self, request):
         user = request.user
         
-        manage_in_stock = Product.objects.filter(
-            owner=user, 
-            availability='in_stock'
-        ).count()
-        
-        sold_amount = TransactionHistory.objects.filter(
-            user=user,
-            transaction_type='sale'
-        ).aggregate(
-            total=Sum('sale_price')
-        )['total'] or Decimal('0')
-        
-        sold_amount_items = TransactionItem.objects.filter(
-            transaction__user=user,
-            transaction__transaction_type='sale',
-            sale_price__isnull=False
-        ).aggregate(
-            total=Sum(F('quantity') * F('sale_price'))
-        )['total'] or Decimal('0')
-        
-        sold_amount = max(sold_amount, sold_amount_items)
-        
-        pending_sale = Product.objects.filter(
-            owner=user,
-            availability='reserved'
-        ).count()
-        
-        total_orders = TransactionHistory.objects.filter(user=user).count()
-        
-        stats_data = {
-            'manage_in_stock': manage_in_stock,
-            'sold_amount': sold_amount,
-            'pending_sale': pending_sale,
-            'total_orders': total_orders
-        }
-        
-        return Response(stats_data, status=status.HTTP_200_OK)
+        try:
+            product_stats = Product.objects.filter(owner=user).aggregate(
+                in_stock=Count('id', filter=Q(availability='in_stock')),
+                reserved=Count('id', filter=Q(availability='reserved'))
+            )
+            
+            sales_data = TransactionItem.objects.filter(
+                transaction__user=user,
+                transaction__transaction_type='sale'
+            ).aggregate(
+                total_sales=Coalesce(Sum(F('quantity') * F('sale_price')), Decimal('0')),
+                total_purchases=Coalesce(Sum(F('quantity') * F('purchase_price')), Decimal('0')),
+                count=Count('id')
+            )
+            
+            stats_data = {
+                'manage_in_stock': product_stats['in_stock'],
+                'sold_amount': sales_data['total_sales'],
+                'pending_sale': product_stats['reserved'],
+                'total_orders': sales_data['count'],
+                'total_profit': sales_data['total_sales'] - sales_data['total_purchases'],
+                'total_purchase_amount': sales_data['total_purchases']
+            }
+            
+            return Response(stats_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Could not retrieve dashboard stats'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class ExpenseTrackingAPIView(APIView):
