@@ -18,6 +18,8 @@ from django.db.models.functions import Cast
 from django.db.models import CharField, Case, When, Value, Q
 from transactions.models import TransactionHistory, TransactionItem
 from rest_framework.permissions import AllowAny, IsAuthenticated
+import logging
+logger = logging.getLogger(__name__)
 
 
 class CustomPagination(PageNumberPagination):
@@ -445,42 +447,117 @@ class MonthlyProfitAPIView(APIView):
     
     def get(self, request):
         """
-        Get monthly profit and loss data
+        Get profit and loss report with period filtering (month/week)
+        Structured similarly to PurchaseSalesReportAPIView
         """
         user = request.user
-        year = request.query_params.get('year', timezone.now().year)
+        period = request.query_params.get('period', 'month')  # month or week
         
-        # Get monthly data
-        monthly_data = Product.objects.filter(
-            owner=user,
-            date_sold__year=year,
-            availability='sold'
-        ).annotate(
-            month=TruncMonth('date_sold')
-        ).values('month').annotate(
-            profit=Coalesce(Sum('profit'), 0, output_field=DecimalField()),
-            revenue=Coalesce(Sum('sold_price'), 0, output_field=DecimalField()),
-            cost=Coalesce(Sum('buying_price'), 0, output_field=DecimalField()) + 
-                 Coalesce(Sum(Coalesce('shipping_price', 0, output_field=DecimalField())), 0, output_field=DecimalField()) + 
-                 Coalesce(Sum(Coalesce('repair_cost', 0, output_field=DecimalField())), 0, output_field=DecimalField()) + 
-                 Coalesce(Sum(Coalesce('fees', 0, output_field=DecimalField())), 0, output_field=DecimalField()) + 
-                 Coalesce(Sum(Coalesce('commission', 0, output_field=DecimalField())), 0, output_field=DecimalField())
-        ).order_by('month')
+        today = timezone.now().date()
         
-        # Format the response
-        formatted_data = []
-        
-        for month_data in monthly_data:
-            month_name = calendar.month_name[month_data['month'].month]
-            formatted_data.append({
-                'month': month_name,
-                'profit': float(month_data['profit']),
-                'revenue': float(month_data['revenue']),
-                'cost': float(month_data['cost'])
-            })
+        def get_profit_total(queryset):
+            # Calculate profit from TransactionHistory
+            trans_profit = queryset.aggregate(
+                profit=Coalesce(Sum(F('sale_price') - F('purchase_price')), Decimal('0'))
+            )['profit']
             
-        return Response(formatted_data)
-
+            # Calculate profit from TransactionItems
+            items_profit = TransactionItem.objects.filter(
+                transaction__in=queryset
+            ).aggregate(
+                profit=Coalesce(Sum(F('quantity') * (F('sale_price') - F('purchase_price'))), Decimal('0'))
+            )['profit']
+            
+            return max(trans_profit, items_profit)
+        
+        if period == 'week':
+            # Get data for the last 12 weeks
+            start_date = today - timedelta(weeks=12)
+            
+            chart_data = []
+            for i in range(12, -1, -1):
+                week_start = today - timedelta(weeks=i)
+                week_end = week_start + timedelta(days=6)
+                
+                profit_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__gte=week_start,
+                    date__lte=week_end
+                )
+                profit = get_profit_total(profit_transactions)
+                
+                chart_data.append({
+                    'period': f"Week {week_start.isocalendar()[1]}",
+                    'profit': float(profit),
+                    'type': 'Profit' if profit >= 0 else 'Loss'
+                })
+            
+            current_period_profit = get_profit_total(
+                TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__week=today.isocalendar()[1],
+                    date__year=today.year
+                )
+            )
+            
+        else: 
+            # Default to monthly data (last 6 months)
+            chart_data = []
+            for i in range(6, -1, -1):
+                month = today.month - i
+                year = today.year
+                while month < 1:
+                    month += 12
+                    year -= 1
+                
+                month_start = date(year, month, 1)
+                if month == 12:
+                    month_end = date(year+1, 1, 1)
+                else:
+                    month_end = date(year, month+1, 1)
+                
+                profit_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__gte=month_start,
+                    date__lt=month_end
+                )
+                profit = get_profit_total(profit_transactions)
+                
+                chart_data.append({
+                    'period': month_start.strftime('%b'),
+                    'profit': float(profit),
+                    'type': 'Profit' if profit >= 0 else 'Loss'
+                })
+            
+            current_period_profit = get_profit_total(
+                TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__month=today.month,
+                    date__year=today.year
+                )
+            )
+        
+        total_profit = sum(period['profit'] for period in chart_data)
+        
+        return Response({
+            'summary': {
+                'profit': {
+                    'total': total_profit,
+                    'periods': [period['period'] for period in chart_data]
+                },
+                'view_type': period
+            },
+            'chart_data': chart_data,
+            'current_period': {
+                'period': today.strftime('%b') if period == 'month' else f"Week {today.isocalendar()[1]}",
+                'value': float(current_period_profit),
+                'type': 'Profit' if current_period_profit >= 0 else 'Loss'
+            }
+        })
 
 class UserSpecificReportAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]

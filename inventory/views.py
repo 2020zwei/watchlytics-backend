@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import Category, Product
-from .serializers import CategorySerializer, ProductSerializer, ProductCreateSerializer, BulkProductSoldSerializer
+from .serializers import CategorySerializer, ProductSerializer, ProductCreateSerializer, BulkProductSoldSerializer, BulkUpdateAvailabilitySerializer, BulkDeleteProductsSerializer
 from rest_framework.permissions import AllowAny
 from io import TextIOWrapper
 from inventory.models import Product, Category
@@ -653,7 +653,169 @@ class ProductCSVUploadAPIView(APIView):
         }
         return mapping.get(deal_status.lower(), 'in_stock')
     
+class BulkProductOperationsView(APIView):
+    AVAILABILITY_CHOICES = [
+        ('in_stock', 'In Stock'),
+        ('sold', 'Sold'),
+        ('reserved', 'Reserved'),
+        ('in_repair', 'In Repair'),
+    ]
+    
+    def post(self, request, *args, **kwargs):
+        action = request.data.get('action', 'mark_sold')
+        
+        if action == 'mark_sold':
+            return self._mark_products_sold(request)
+        elif action == 'update_availability':
+            return self._update_availability(request)
+        elif action == 'bulk_delete':
+            return self._bulk_delete(request)
+        else:
+            return Response({
+                'status': 'error',
+                'message': 'Invalid action. Supported actions: mark_sold, update_availability, bulk_delete'
+            }, status=400)
+    
+    def _mark_products_sold(self, request):
+        serializer = BulkProductSoldSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        try:
+            product_ids = [int(str(pid).strip()) for pid in serializer.validated_data['product_ids']]
+        except ValueError:
+            return Response({
+                'status': 'error',
+                'message': 'Invalid product ID format'
+            }, status=400)
+        
+        try:
+            with transaction.atomic():
+                updated_count = Product.objects.filter(id__in=product_ids).update(
+                    is_sold=True,
+                    availability='sold',
+                    date_sold=timezone.now()
+                )
+                
+                return Response({
+                    'status': 'success' if updated_count > 0 else 'no_match',
+                    'message': f'Found and updated {updated_count} product(s) as sold',
+                    'updated_count': updated_count,
+                    'requested_ids': product_ids
+                })
+                
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': f'Error marking products as sold: {str(e)}'
+            }, status=500)
+    
+    def _update_availability(self, request):
+        serializer = BulkUpdateAvailabilitySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        try:
+            product_ids = [int(str(pid).strip()) for pid in serializer.validated_data['product_ids']]
+            new_availability = serializer.validated_data['availability']
+        except ValueError:
+            return Response({
+                'status': 'error',
+                'message': 'Invalid product ID format'
+            }, status=400)
+        
+        valid_choices = [choice[0] for choice in self.AVAILABILITY_CHOICES]
+        if new_availability not in valid_choices:
+            return Response({
+                'status': 'error',
+                'message': f'Invalid availability status. Valid choices: {valid_choices}'
+            }, status=400)
+        
+        try:
+            with transaction.atomic():
+                update_fields = {'availability': new_availability}
+                
+                # Handle specific availability updates
+                if new_availability == 'sold':
+                    update_fields.update({
+                        'is_sold': True,
+                        'date_sold': timezone.now()
+                    })
+                elif new_availability == 'in_stock':
+                    update_fields.update({
+                        'is_sold': False,
+                        'date_sold': None
+                    })
+                
+                updated_count = Product.objects.filter(id__in=product_ids).update(**update_fields)
+                
+                return Response({
+                    'status': 'success' if updated_count > 0 else 'no_match',
+                    'message': f'Found and updated {updated_count} product(s) to {new_availability}',
+                    'updated_count': updated_count,
+                    'requested_ids': product_ids,
+                    'new_availability': new_availability
+                })
+                
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': f'Error updating product availability: {str(e)}'
+            }, status=500)
+    
+    def _bulk_delete(self, request):
+        serializer = BulkDeleteProductsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        try:
+            product_ids = [int(str(pid).strip()) for pid in serializer.validated_data['product_ids']]
+        except ValueError:
+            return Response({
+                'status': 'error',
+                'message': 'Invalid product ID format'
+            }, status=400)
+        
+        try:
+            with transaction.atomic():
+                products_to_delete = Product.objects.filter(id__in=product_ids)
+                deleted_count = products_to_delete.count()
+                
+                if deleted_count == 0:
+                    return Response({
+                        'status': 'no_match',
+                        'message': 'No products found with the provided IDs',
+                        'deleted_count': 0,
+                        'requested_ids': product_ids
+                    })
+                
+                products_to_delete.delete()
+                
+                return Response({
+                    'status': 'success',
+                    'message': f'Successfully deleted {deleted_count} product(s)',
+                    'deleted_count': deleted_count,
+                    'requested_ids': product_ids
+                })
+                
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': f'Error deleting products: {str(e)}'
+            }, status=500)
+
+
+from rest_framework import serializers
+
+
+
 class BulkMarkProductsSoldView(APIView):
+    """Original view enhanced with availability choices"""
+    
+    AVAILABILITY_CHOICES = [
+        ('in_stock', 'In Stock'),
+        ('sold', 'Sold'),
+        ('reserved', 'Reserved'),
+        ('in_repair', 'In Repair'),
+    ]
+    
     def post(self, request, *args, **kwargs):
 
         serializer = BulkProductSoldSerializer(data=request.data)
@@ -671,7 +833,7 @@ class BulkMarkProductsSoldView(APIView):
                 updated_count = Product.objects.filter(id__in=product_ids).update(
                     is_sold=True,
                     availability='sold',
-                    date_sold=datetime.now()
+                    date_sold=timezone.now()
                 )
                 
                 return Response({
@@ -685,4 +847,48 @@ class BulkMarkProductsSoldView(APIView):
             return Response({
                 'status': 'error',
                 'message': str(e)
+            }, status=500)
+
+
+class BulkDeleteProductsView(APIView):
+    """Separate view for bulk delete operations"""
+    
+    def post(self, request, *args, **kwargs):
+        serializer = BulkDeleteProductsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        try:
+            product_ids = [int(str(pid).strip()) for pid in serializer.validated_data['product_ids']]
+        except ValueError:
+            return Response({
+                'status': 'error',
+                'message': 'Invalid product ID format'
+            }, status=400)
+        
+        try:
+            with transaction.atomic():
+                products_to_delete = Product.objects.filter(id__in=product_ids)
+                deleted_count = products_to_delete.count()
+                
+                if deleted_count == 0:
+                    return Response({
+                        'status': 'no_match',
+                        'message': 'No products found with the provided IDs',
+                        'deleted_count': 0,
+                        'requested_ids': product_ids
+                    })
+                
+                products_to_delete.delete()
+                
+                return Response({
+                    'status': 'success',
+                    'message': f'Successfully deleted {deleted_count} product(s)',
+                    'deleted_count': deleted_count,
+                    'requested_ids': product_ids
+                })
+                
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': f'Error deleting products: {str(e)}'
             }, status=500)

@@ -153,3 +153,28 @@ class BulkProductSoldSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError("At least one product ID is required")
         return value
+    
+
+class BulkProductSoldSerializer(serializers.Serializer):
+    product_ids = serializers.ListField(
+        child=serializers.CharField(),
+        min_length=1,
+        help_text="List of product IDs to mark as sold"
+    )
+
+class BulkUpdateAvailabilitySerializer(serializers.Serializer):
+    product_ids = serializers.ListField(
+        child=serializers.CharField(),
+        min_length=1,
+        help_text="List of product IDs to update"
+    )
+    availability = serializers.CharField(
+        help_text="New availability status (in_stock, sold, reserved, in_repair)"
+    )
+
+class BulkDeleteProductsSerializer(serializers.Serializer):
+    product_ids = serializers.ListField(
+        child=serializers.CharField(),
+        min_length=1,
+        help_text="List of product IDs to delete"
+    )
