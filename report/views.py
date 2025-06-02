@@ -443,119 +443,188 @@ class StockAgingAPIView(APIView):
         })
 
 class MonthlyProfitAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """
-        Get profit and loss report with period filtering (month/week)
-        Structured similarly to PurchaseSalesReportAPIView
-        """
         user = request.user
         period = request.query_params.get('period', 'month')  # month or week
         
         today = timezone.now().date()
         
-        def get_profit_total(queryset):
-            # Calculate profit from TransactionHistory
-            trans_profit = queryset.aggregate(
-                profit=Coalesce(Sum(F('sale_price') - F('purchase_price')), Decimal('0'))
-            )['profit']
+        def get_sales_total(queryset):
+            # First try to get from transaction-level sale_price
+            transaction_total = queryset.aggregate(
+                total=Coalesce(Sum('sale_price'), Decimal('0'))
+            )['total']
             
-            # Calculate profit from TransactionItems
-            items_profit = TransactionItem.objects.filter(
+            # Then get from item-level calculations
+            items_total = TransactionItem.objects.filter(
                 transaction__in=queryset
             ).aggregate(
-                profit=Coalesce(Sum(F('quantity') * (F('sale_price') - F('purchase_price'))), Decimal('0'))
-            )['profit']
+                total=Coalesce(Sum(F('quantity') * F('sale_price')), Decimal('0'))
+            )['total']
             
-            return max(trans_profit, items_profit)
+            # Use transaction total if available, otherwise use items total
+            return transaction_total if transaction_total > 0 else items_total
+        
+        def get_purchases_total(queryset):
+            # First try to get from transaction-level purchase_price
+            transaction_total = queryset.aggregate(
+                total=Coalesce(Sum('purchase_price'), Decimal('0'))
+            )['total']
+            
+            # Then get from item-level calculations
+            items_total = TransactionItem.objects.filter(
+                transaction__in=queryset
+            ).aggregate(
+                total=Coalesce(Sum(F('quantity') * F('purchase_price')), Decimal('0'))
+            )['total']
+            
+            return transaction_total if transaction_total > 0 else items_total
         
         if period == 'week':
             # Get data for the last 12 weeks
-            start_date = today - timedelta(weeks=12)
-            
             chart_data = []
             for i in range(12, -1, -1):
-                week_start = today - timedelta(weeks=i)
+                week_start = today - timedelta(weeks=i, days=today.weekday())
                 week_end = week_start + timedelta(days=6)
                 
-                profit_transactions = TransactionHistory.objects.filter(
+                sales_transactions = TransactionHistory.objects.filter(
                     user=user,
                     transaction_type='sale',
                     date__gte=week_start,
                     date__lte=week_end
                 )
-                profit = get_profit_total(profit_transactions)
+                sales = get_sales_total(sales_transactions)
+                
+                purchase_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='purchase',
+                    date__gte=week_start,
+                    date__lte=week_end
+                )
+                purchases = get_purchases_total(purchase_transactions)
+                
+                profit = sales - purchases
                 
                 chart_data.append({
                     'period': f"Week {week_start.isocalendar()[1]}",
-                    'profit': float(profit),
-                    'type': 'Profit' if profit >= 0 else 'Loss'
+                    'profit': float(profit) if profit >= 0 else 0.0,
+                    'loss': float(abs(profit)) if profit < 0 else 0.0,
+                    'net_profit': float(profit)  # Add net profit for clarity
                 })
             
-            current_period_profit = get_profit_total(
+            current_week_start = today - timedelta(days=today.weekday())
+            current_week_end = current_week_start + timedelta(days=6)
+            
+            current_period_sales = get_sales_total(
                 TransactionHistory.objects.filter(
                     user=user,
                     transaction_type='sale',
-                    date__week=today.isocalendar()[1],
-                    date__year=today.year
+                    date__gte=current_week_start,
+                    date__lte=current_week_end
                 )
             )
             
-        else: 
-            # Default to monthly data (last 6 months)
+            current_period_purchases = get_purchases_total(
+                TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='purchase',
+                    date__gte=current_week_start,
+                    date__lte=current_week_end
+                )
+            )
+            
+            current_period_profit = current_period_sales - current_period_purchases
+            
+        else:  # month period
             chart_data = []
+            
             for i in range(6, -1, -1):
-                month = today.month - i
-                year = today.year
-                while month < 1:
-                    month += 12
-                    year -= 1
+                target_date = today.replace(day=1) - timedelta(days=1)  # Last day of previous month
+                for _ in range(i):
+                    target_date = target_date.replace(day=1) - timedelta(days=1)
                 
-                month_start = date(year, month, 1)
-                if month == 12:
-                    month_end = date(year+1, 1, 1)
+                month_start = target_date.replace(day=1)
+                # Get last day of month
+                if month_start.month == 12:
+                    month_end = month_start.replace(year=month_start.year + 1, month=1, day=1) - timedelta(days=1)
                 else:
-                    month_end = date(year, month+1, 1)
+                    month_end = month_start.replace(month=month_start.month + 1, day=1) - timedelta(days=1)
                 
-                profit_transactions = TransactionHistory.objects.filter(
+                # Get sales for this month
+                sales_transactions = TransactionHistory.objects.filter(
                     user=user,
                     transaction_type='sale',
                     date__gte=month_start,
-                    date__lt=month_end
+                    date__lte=month_end
                 )
-                profit = get_profit_total(profit_transactions)
+                sales = get_sales_total(sales_transactions)
+                
+                purchase_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='purchase',
+                    date__gte=month_start,
+                    date__lte=month_end
+                )
+                purchases = get_purchases_total(purchase_transactions)
+                
+                profit = sales - purchases
                 
                 chart_data.append({
-                    'period': month_start.strftime('%b'),
-                    'profit': float(profit),
-                    'type': 'Profit' if profit >= 0 else 'Loss'
+                    'period': month_start.strftime('%b %Y'),  # Include year for clarity
+                    'profit': float(profit) if profit >= 0 else 0.0,
+                    'loss': float(abs(profit)) if profit < 0 else 0.0,
+                    'net_profit': float(profit)  # Add net profit for clarity
                 })
             
-            current_period_profit = get_profit_total(
+            # Current month calculation
+            month_start = today.replace(day=1)
+            
+            current_period_sales = get_sales_total(
                 TransactionHistory.objects.filter(
                     user=user,
                     transaction_type='sale',
-                    date__month=today.month,
-                    date__year=today.year
+                    date__gte=month_start,
+                    date__lte=today
                 )
             )
+            
+            current_period_purchases = get_purchases_total(
+                TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='purchase',
+                    date__gte=month_start,
+                    date__lte=today
+                )
+            )
+            
+            current_period_profit = current_period_sales - current_period_purchases
         
+        total_net_profit = sum(period['net_profit'] for period in chart_data)
         total_profit = sum(period['profit'] for period in chart_data)
+        total_loss = sum(period['loss'] for period in chart_data)
         
         return Response({
             'summary': {
                 'profit': {
                     'total': total_profit,
+                    'net_total': total_net_profit,  # This is the actual profit/loss
                     'periods': [period['period'] for period in chart_data]
                 },
-                'view_type': period
+                'loss': {
+                    'total': total_loss,
+                    'view_type': period
+                },
+                'net_profit': total_net_profit  # Overall net profit/loss
             },
             'chart_data': chart_data,
             'current_period': {
-                'period': today.strftime('%b') if period == 'month' else f"Week {today.isocalendar()[1]}",
-                'value': float(current_period_profit),
-                'type': 'Profit' if current_period_profit >= 0 else 'Loss'
+                'period': today.strftime('%b %Y') if period == 'month' else f"Week {today.isocalendar()[1]}",
+                'date': today.strftime('%b %Y') if period == 'month' else f"Week {today.isocalendar()[1]}",
+                'value': f"{current_period_profit:,.0f}",
+                'sales': f"{current_period_sales:,.0f}",
+                'purchases': f"{current_period_purchases:,.0f}"
             }
         })
 
@@ -771,6 +840,7 @@ class PurchaseSalesReportAPIView(APIView):
                 
                 chart_data.append({
                     'period': f"Week {week_start.isocalendar()[1]}",  # Week number
+                    'date': f"Week {week_start.isocalendar()[1]}",  # Week number
                     'purchases': float(purchases),
                     'sales': float(sales)
                 })
