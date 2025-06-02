@@ -9,7 +9,9 @@ from django.core.paginator import Paginator
 from .models import MarketData
 from .serializers import MarketDataSerializer
 from inventory.models import Product  # Import Product model from inventory
-
+from django.utils import timezone
+from django.utils.timesince import timesince
+from django.utils.timezone import now
 class CustomPagination(PageNumberPagination):
     page_size = 20
     page_size_query_param = 'page_size'
@@ -137,6 +139,7 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                     },
                     'sources': {},
                     'potential_profit': None,
+                    'last_updated': None,
                     'message': 'No market data found matching this product'
                 })
                 continue
@@ -151,6 +154,12 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
             
             # Get a sample market item for additional info
             sample_market_item = market_data.first()
+            
+            if market_data.exists():
+                raw_time = timesince(market_data.order_by('-scraped_at').first().scraped_at, now())
+                last_updated = raw_time.split(',')[0] + " ago"  # Only the first unit
+            else:
+                last_updated = None
             
             # Get sources data and compare with inventory buying price
             sources_data = {}
@@ -169,10 +178,18 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                     # Calculate trend based on inventory buying price vs market average
                     trend = None
                     source_avg = source_stats['avg_price']
+                    price_diff_dollar = None
+                    price_diff_percent = None
+                    
                     if source_avg and buying_price:
-                        if source_avg > float(buying_price) * 1.05:  # 5% threshold
+                        buying_price_float = float(buying_price)
+                        source_avg_float = float(source_avg)
+                        price_diff_dollar = round(source_avg_float - buying_price_float, 2)
+                        price_diff_percent = round((price_diff_dollar / buying_price_float) * 100, 2)
+                        
+                        if source_avg_float > buying_price_float * 1.05:  # 5% threshold
                             trend = 'up'
-                        elif source_avg < float(buying_price) * 0.95:  # 5% threshold
+                        elif source_avg_float < buying_price_float * 0.95:  # 5% threshold
                             trend = 'down'
                         else:
                             trend = 'stable'
@@ -183,7 +200,9 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                         'max_price': source_stats['max_price'],
                         'price': round(source_avg, 2) if source == 'ebay' and source_avg else source_stats['min_price'],
                         'count': source_stats['count'],
-                        'trend': trend
+                        'trend': trend,
+                        'price_diff_dollar': price_diff_dollar,
+                        'price_diff_percent': price_diff_percent
                     }
             
             # Calculate potential profit based on market average vs inventory buying price
@@ -211,7 +230,8 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                     'sample_image': sample_market_item.image_url if sample_market_item else None
                 },
                 'potential_profit': potential_profit,
-                'profit_margin_percentage': round((potential_profit / float(buying_price)) * 100, 2) if potential_profit and buying_price else None
+                'profit_margin_percentage': round((potential_profit / float(buying_price)) * 100, 2) if potential_profit and buying_price else None,
+                'last_updated': last_updated
             }
             
             comparison_data.append(comparison_item)
@@ -234,7 +254,7 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                 'max_buying_price': max_buying_price
             }
         })
-    
+
     def _find_market_matches(self, product_id, model_name, brand):
         """
         Helper method to find market data matches with prioritized search strategy
