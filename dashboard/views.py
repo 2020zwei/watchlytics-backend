@@ -2,13 +2,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum, Count, Q, F
+from django.db.models import Sum, Count, Q, F, Avg
 from django.utils import timezone
 from datetime import datetime, timedelta
 from calendar import month_name
 from decimal import Decimal
 from transactions.models import TransactionHistory, TransactionItem
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, TruncMonth
 from inventory.models import Product
 from .serializers import (
     DashboardStatsSerializer, 
@@ -24,37 +24,268 @@ class DashboardStatsAPIView(APIView):
         user = request.user
         
         try:
+            # Basic product statistics
             product_stats = Product.objects.filter(owner=user).aggregate(
                 in_stock=Count('id', filter=Q(availability='in_stock')),
-                reserved=Count('id', filter=Q(availability='reserved'))
+                reserved=Count('id', filter=Q(availability='reserved')),
+                sold_count=Count('id', filter=Q(availability='sold'))  # Total sold count
             )
             
+            # Sales data from transaction items
             sales_data = TransactionItem.objects.filter(
                 transaction__user=user,
                 transaction__transaction_type='sale'
             ).aggregate(
                 total_sales=Coalesce(Sum(F('quantity') * F('sale_price')), Decimal('0')),
                 total_purchases=Coalesce(Sum(F('quantity') * F('purchase_price')), Decimal('0')),
-                count=Count('id')
+                count=Count('id'),
+                total_quantity_sold=Coalesce(Sum('quantity'), 0)
             )
+            
+            total_profit = sales_data['total_sales'] - sales_data['total_purchases']
+            
+            average_profit_per_unit = Decimal('0')
+            if sales_data['total_quantity_sold'] > 0:
+                average_profit_per_unit = total_profit / sales_data['total_quantity_sold']
+            
+            sold_transactions = TransactionItem.objects.filter(
+                transaction__user=user,
+                transaction__transaction_type='sale',
+                sale_price__isnull=False,
+                purchase_price__isnull=False
+            )
+            
+            transaction_profits = []
+            for item in sold_transactions:
+                if item.sale_price and item.purchase_price:
+                    item_profit = (item.sale_price - item.purchase_price) * item.quantity
+                    transaction_profits.append(item_profit)
+            
+            average_profit_per_transaction = Decimal('0')
+            if transaction_profits:
+                average_profit_per_transaction = sum(transaction_profits) / len(transaction_profits)
             
             stats_data = {
                 'manage_in_stock': product_stats['in_stock'],
                 'sold_amount': sales_data['total_sales'],
                 'pending_sale': product_stats['reserved'],
                 'total_orders': sales_data['count'],
-                'total_profit': sales_data['total_sales'] - sales_data['total_purchases'],
-                'total_purchase_amount': sales_data['total_purchases']
+                'total_profit': total_profit,
+                'total_purchase_amount': sales_data['total_purchases'],
+                
+                'total_sold_count': product_stats['sold_count'],  # Drillable metric
+                'total_quantity_sold': sales_data['total_quantity_sold'],  # Alternative sold count
+                
+                'average_profit_per_unit': float(average_profit_per_unit),
+                'average_profit_per_transaction': float(average_profit_per_transaction),
+                
+                'profit_margin_percentage': float(
+                    (total_profit / sales_data['total_sales'] * 100) 
+                    if sales_data['total_sales'] > 0 else 0
+                ),
+                
+                'inventory_summary': {
+                    'in_stock': product_stats['in_stock'],
+                    'reserved': product_stats['reserved'],
+                    'sold': product_stats['sold_count'],
+                    'total_products': product_stats['in_stock'] + product_stats['reserved'] + product_stats['sold_count']
+                }
             }
             
             return Response(stats_data, status=status.HTTP_200_OK)
             
         except Exception as e:
             return Response(
-                {'error': 'Could not retrieve dashboard stats'},
+                {'error': f'Could not retrieve dashboard stats: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
+class DrilldownSoldItemsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        try:
+            # Get all sold products with detailed information
+            sold_products = Product.objects.filter(
+                owner=user,
+                availability='sold'
+            ).select_related('category').values(
+                'id',
+                'product_id',
+                'model_name',
+                'category__name',
+                'buying_price',
+                'sold_price',
+                'profit',
+                'date_purchased',
+                'date_sold',
+                'sold_source'
+            )
+            
+            sold_transaction_items = TransactionItem.objects.filter(
+                transaction__user=user,
+                transaction__transaction_type='sale'
+            ).select_related('product', 'transaction').values(
+                'id',
+                'product__product_id',
+                'product__model_name',
+                'product__category__name',
+                'quantity',
+                'sale_price',
+                'purchase_price',
+                'transaction__date',
+                'transaction__name_of_trade',
+                'transaction__customer__name'
+            )
+            
+            transaction_items_with_profit = []
+            for item in sold_transaction_items:
+                if item['sale_price'] and item['purchase_price']:
+                    profit = (item['sale_price'] - item['purchase_price']) * item['quantity']
+                else:
+                    profit = 0.0
+                
+                renamed_item = {
+                    'id': item['id'],
+                    'reference_number': item['product__product_id'],
+                    'Model': item['product__model_name'],
+                    'brand': item['product__category__name'],
+                    'quantity': item['quantity'],
+                    'sale_price': item['sale_price'],
+                    'purchase_price': item['purchase_price'],
+                    'transaction_date': item['transaction__date'],
+                    'transaction_name': item['transaction__name_of_trade'],
+                    'customer_name': item['transaction__customer__name'],
+                    'profit': float(profit)
+                }
+                transaction_items_with_profit.append(renamed_item)
+            
+            # Add days_in_inventory to sold products
+            sold_products_with_days = []
+            for product in sold_products:
+                product_dict = dict(product)
+                # Calculate days in inventory manually
+                if product['date_purchased'] and product['date_sold']:
+                    days_diff = (product['date_sold'] - product['date_purchased']).days
+                    product_dict['days_in_inventory'] = days_diff
+                else:
+                    product_dict['days_in_inventory'] = None
+                sold_products_with_days.append(product_dict)
+            
+            response_data = {
+                'sold_products_count': len(sold_products_with_days),
+                'sold_transaction_items_count': len(transaction_items_with_profit),
+                'sold_products': sold_products_with_days,
+                'sold_transaction_items': transaction_items_with_profit,
+                'summary': {
+                    'total_sold_value': sum(
+                        float(item.get('sale_price', 0) or 0) * item.get('quantity', 1) 
+                        for item in transaction_items_with_profit
+                    ),
+                    'total_profit': sum(
+                        item.get('profit', 0) for item in transaction_items_with_profit
+                    )
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Could not retrieve sold items details: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class ProfitAnalyticsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        try:
+            # Profit breakdown by category
+            category_profits = TransactionItem.objects.filter(
+                transaction__user=user,
+                transaction__transaction_type='sale',
+                sale_price__isnull=False,
+                purchase_price__isnull=False
+            ).values(
+                'product__category__name'
+            ).annotate(
+                total_profit=Sum(
+                    (F('sale_price') - F('purchase_price')) * F('quantity')
+                ),
+                avg_profit=Avg(
+                    (F('sale_price') - F('purchase_price')) * F('quantity')
+                ),
+                total_sales=Sum(F('sale_price') * F('quantity')),
+                count=Count('id')
+            ).order_by('-total_profit')
+            
+            # Monthly profit trend using Django's TruncMonth
+            monthly_profits = TransactionItem.objects.filter(
+                transaction__user=user,
+                transaction__transaction_type='sale',
+                sale_price__isnull=False,
+                purchase_price__isnull=False
+            ).annotate(
+                month=TruncMonth('transaction__date')
+            ).values('month').annotate(
+                total_profit=Sum(
+                    (F('sale_price') - F('purchase_price')) * F('quantity')
+                ),
+                total_sales=Sum(F('sale_price') * F('quantity')),
+                count=Count('id')
+            ).order_by('month')
+            
+            # Top performing products
+            top_products = TransactionItem.objects.filter(
+                transaction__user=user,
+                transaction__transaction_type='sale',
+                sale_price__isnull=False,
+                purchase_price__isnull=False
+            ).values(
+                'product__product_id',
+                'product__model_name'
+            ).annotate(
+                total_profit=Sum(
+                    (F('sale_price') - F('purchase_price')) * F('quantity')
+                ),
+                total_sales=Sum(F('sale_price') * F('quantity')),
+                quantity_sold=Sum('quantity')
+            ).order_by('-total_profit')[:10]
+            
+            # Convert monthly profits to proper format
+            monthly_profits_formatted = []
+            for item in monthly_profits:
+                monthly_profits_formatted.append({
+                    'month': item['month'].strftime('%Y-%m') if item['month'] else None,
+                    'total_profit': float(item['total_profit']) if item['total_profit'] else 0.0,
+                    'total_sales': float(item['total_sales']) if item['total_sales'] else 0.0,
+                    'count': item['count']
+                })
+            
+            response_data = {
+                'category_analysis': list(category_profits),
+                'monthly_trends': monthly_profits_formatted,
+                'top_performing_products': list(top_products),
+                'overall_metrics': {
+                    'total_categories': len(category_profits),
+                    'best_category': category_profits[0]['product__category__name'] if category_profits else None,
+                    'best_month': max(monthly_profits_formatted, key=lambda x: x['total_profit'])['month'] if monthly_profits_formatted else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Could not retrieve profit analytics: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class ExpenseTrackingAPIView(APIView):
     permission_classes = [IsAuthenticated]
