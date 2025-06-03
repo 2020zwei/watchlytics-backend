@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from calendar import month_name
 from decimal import Decimal
 from transactions.models import TransactionHistory, TransactionItem
+from django.db.models.functions import Coalesce
 from inventory.models import Product
 from .serializers import (
     DashboardStatsSerializer, 
@@ -22,43 +23,37 @@ class DashboardStatsAPIView(APIView):
     def get(self, request):
         user = request.user
         
-        manage_in_stock = Product.objects.filter(
-            owner=user, 
-            availability='in_stock'
-        ).count()
-        
-        sold_amount = TransactionHistory.objects.filter(
-            user=user,
-            transaction_type='sale'
-        ).aggregate(
-            total=Sum('sale_price')
-        )['total'] or Decimal('0')
-        
-        sold_amount_items = TransactionItem.objects.filter(
-            transaction__user=user,
-            transaction__transaction_type='sale',
-            sale_price__isnull=False
-        ).aggregate(
-            total=Sum(F('quantity') * F('sale_price'))
-        )['total'] or Decimal('0')
-        
-        sold_amount = max(sold_amount, sold_amount_items)
-        
-        pending_sale = Product.objects.filter(
-            owner=user,
-            availability='reserved'
-        ).count()
-        
-        total_orders = TransactionHistory.objects.filter(user=user).count()
-        
-        stats_data = {
-            'manage_in_stock': manage_in_stock,
-            'sold_amount': sold_amount,
-            'pending_sale': pending_sale,
-            'total_orders': total_orders
-        }
-        
-        return Response(stats_data, status=status.HTTP_200_OK)
+        try:
+            product_stats = Product.objects.filter(owner=user).aggregate(
+                in_stock=Count('id', filter=Q(availability='in_stock')),
+                reserved=Count('id', filter=Q(availability='reserved'))
+            )
+            
+            sales_data = TransactionItem.objects.filter(
+                transaction__user=user,
+                transaction__transaction_type='sale'
+            ).aggregate(
+                total_sales=Coalesce(Sum(F('quantity') * F('sale_price')), Decimal('0')),
+                total_purchases=Coalesce(Sum(F('quantity') * F('purchase_price')), Decimal('0')),
+                count=Count('id')
+            )
+            
+            stats_data = {
+                'manage_in_stock': product_stats['in_stock'],
+                'sold_amount': sales_data['total_sales'],
+                'pending_sale': product_stats['reserved'],
+                'total_orders': sales_data['count'],
+                'total_profit': sales_data['total_sales'] - sales_data['total_purchases'],
+                'total_purchase_amount': sales_data['total_purchases']
+            }
+            
+            return Response(stats_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Could not retrieve dashboard stats'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class ExpenseTrackingAPIView(APIView):
@@ -143,77 +138,92 @@ class ExpenseTrackingAPIView(APIView):
 class IncomeBreakdownAPIView(APIView):
     permission_classes = [IsAuthenticated]
     
+    def get_actual_income(self, user, year_start, year_end):
+        try:
+            history_income = TransactionHistory.objects.filter(
+                user=user,
+                transaction_type='sale',
+                date__range=(year_start, year_end)
+            ).aggregate(
+                total=Sum('sale_price')
+            )['total'] or Decimal('0')
+            
+            items_income = TransactionItem.objects.filter(
+                transaction__user=user,
+                transaction__transaction_type='sale',
+                transaction__date__range=(year_start, year_end)
+            ).aggregate(
+                total=Sum(F('quantity') * F('sale_price'))
+            )['total'] or Decimal('0')
+            
+            return max(history_income, items_income)
+        except Exception as e:
+            return Decimal('0')
+    
+    def get_pending_income(self, user):
+        try:
+            price_fields = ['website_price', 'sold_price', 'msrp']
+            
+            for field in price_fields:
+                result = Product.objects.filter(
+                    owner=user,
+                    availability='reserved',
+                    **{f"{field}__isnull": False}
+                ).aggregate(
+                    total=Sum(field)
+                )
+                if result['total']:
+                    return result['total']
+            
+            return Decimal('0')
+        except Exception as e:
+            return Decimal('0')
+    
+    def calculate_target(self, actual_income, pending_income, user):
+        try:
+            base_target = (actual_income + pending_income) * Decimal('1.2')
+            
+            total_msrp = Product.objects.filter(
+                owner=user,
+                msrp__isnull=False
+            ).aggregate(
+                total=Sum('msrp')
+            )['total'] or Decimal('0')
+            
+            return max(base_target, total_msrp)
+        except Exception as e:
+            return Decimal('0')
+    
     def get(self, request):
         user = request.user
         
-        current_year = timezone.now().year
-        year_start = datetime(current_year, 1, 1).date()
-        year_end = datetime(current_year, 12, 31).date()
-        
-        actual_income = TransactionHistory.objects.filter(
-            user=user,
-            transaction_type='sale',
-            date__gte=year_start,
-            date__lte=year_end
-        ).aggregate(
-            total=Sum('sale_price')
-        )['total'] or Decimal('0')
-        
-        income_items = TransactionItem.objects.filter(
-            transaction__user=user,
-            transaction__transaction_type='sale',
-            transaction__date__gte=year_start,
-            transaction__date__lte=year_end,
-            sale_price__isnull=False
-        ).aggregate(
-            total=Sum(F('quantity') * F('sale_price'))
-        )['total'] or Decimal('0')
-        
-        actual_income = max(actual_income, income_items)
-        
-        pending_income = Product.objects.filter(
-            owner=user,
-            availability='reserved',
-            website_price__isnull=False
-        ).aggregate(
-            total=Sum('website_price')
-        )['total'] or Decimal('0')
-        
-        if pending_income == 0:
-            pending_income = Product.objects.filter(
-                owner=user,
-                availability='reserved'
-            ).aggregate(
-                total=Sum('sold_price')
-            )['total'] or Decimal('0')
+        try:
+            current_year = timezone.now().year
+            year_start = datetime(current_year, 1, 1).date()
+            year_end = datetime(current_year, 12, 31).date()
             
-            if pending_income == 0:
-                pending_income = Product.objects.filter(
-                    owner=user,
-                    availability='reserved'
-                ).aggregate(
-                    total=Sum('msrp')
-                )['total'] or Decimal('0')
-        
-        target = (actual_income + pending_income) * Decimal('1.2')
-        
-        total_msrp = Product.objects.filter(
-            owner=user,
-            msrp__isnull=False
-        ).aggregate(
-            total=Sum('msrp')
-        )['total'] or Decimal('0')
-        
-        if total_msrp > target:
-            target = total_msrp
-        
-        breakdown_data = {
-            'target': target,
-            'income': actual_income,
-            'pending': pending_income
-        }
-        
-        return Response(breakdown_data, status=status.HTTP_200_OK)
+            actual_income = self.get_actual_income(user, year_start, year_end)
+            pending_income = self.get_pending_income(user)
+            target = self.calculate_target(actual_income, pending_income, user)
+            
+            breakdown_data = {
+                'target': float(target),
+                'income': float(actual_income),
+                'pending': float(pending_income),
+                'year': current_year,
+                'progress': float(actual_income / target) if target > 0 else 0
+            }
+            
+            return Response(breakdown_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Could not calculate income breakdown',
+                    'detail': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class DetailedAnalyticsAPIView(APIView):

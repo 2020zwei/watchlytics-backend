@@ -68,7 +68,8 @@ class User(AbstractUser):
         max_length=10,
         validators=[RegexValidator(r'^\d{8,10}$', message="Client ID must be 8 to 10 digits")],
         blank=True,
-        null=True
+        null=True,
+        unique=True
     )
     is_admin = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
