@@ -62,9 +62,29 @@ class ExpenseTrackingAPIView(APIView):
     def get(self, request):
         user = request.user
         
-        today = timezone.now().date()
-        current_month_start = today.replace(day=1)
+        period_type = request.query_params.get('tracking', 'monthly').lower()
         
+        if period_type not in ['monthly', 'quarterly', 'yearly']:
+            return Response(
+                {'error': 'Invalid period type. Use: monthly, quarterly, or yearly'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        today = timezone.now().date()
+        period_data = []
+        
+        if period_type == 'monthly':
+            period_data = self._get_monthly_data(user, today)
+        elif period_type == 'quarterly':
+            period_data = self._get_quarterly_data(user, today)
+        elif period_type == 'yearly':
+            period_data = self._get_yearly_data(user, today)
+        
+        return Response(period_data, status=status.HTTP_200_OK)
+    
+    def _get_monthly_data(self, user, today):
+        """Get 6 months of data"""
+        current_month_start = today.replace(day=1)
         monthly_data = []
         
         for i in range(6):
@@ -81,59 +101,144 @@ class ExpenseTrackingAPIView(APIView):
             else:
                 next_month_start = month_start.replace(month=month_start.month + 1)
             
-            sales_amount = TransactionHistory.objects.filter(
-                user=user,
-                transaction_type='sale',
-                date__gte=month_start,
-                date__lt=next_month_start
-            ).aggregate(
-                total=Sum('sale_price')
-            )['total'] or Decimal('0')
-            
-            sales_items = TransactionItem.objects.filter(
-                transaction__user=user,
-                transaction__transaction_type='sale',
-                transaction__date__gte=month_start,
-                transaction__date__lt=next_month_start,
-                sale_price__isnull=False
-            ).aggregate(
-                total=Sum(F('quantity') * F('sale_price'))
-            )['total'] or Decimal('0')
-            
-            sales_amount = max(sales_amount, sales_items)
-            
-            purchase_amount = TransactionHistory.objects.filter(
-                user=user,
-                transaction_type='purchase',
-                date__gte=month_start,
-                date__lt=next_month_start
-            ).aggregate(
-                total=Sum('purchase_price')
-            )['total'] or Decimal('0')
-            
-            purchase_items = TransactionItem.objects.filter(
-                transaction__user=user,
-                transaction__transaction_type='purchase',
-                transaction__date__gte=month_start,
-                transaction__date__lt=next_month_start,
-                purchase_price__isnull=False
-            ).aggregate(
-                total=Sum(F('quantity') * F('purchase_price'))
-            )['total'] or Decimal('0')
-            
-            purchase_amount = max(purchase_amount, purchase_items)
-            
-            monthly_data.append({
-                'month': f"{month_name[month_start.month]} {month_start.year}",
-                'sales': float(sales_amount),
-                'purchases': float(purchase_amount)
-            })
+            data = self._calculate_period_data(user, month_start, next_month_start)
+            data['period'] = f"{month_name[month_start.month]} {month_start.year}"
+            monthly_data.append(data)
         
-        # Reverse to show oldest first
         monthly_data.reverse()
+        return monthly_data
+    
+    def _get_quarterly_data(self, user, today):
+        quarterly_data = []
         
-        return Response(monthly_data, status=status.HTTP_200_OK)
-
+        current_quarter = (today.month - 1) // 3 + 1
+        current_year = today.year
+        
+        for i in range(4):
+            quarter = current_quarter - i
+            year = current_year
+            
+            while quarter < 1:
+                quarter += 4
+                year -= 1
+            
+            quarter_start_month = (quarter - 1) * 3 + 1
+            quarter_start = today.replace(year=year, month=quarter_start_month, day=1)
+            
+            if quarter == 4:
+                quarter_end = today.replace(year=year + 1, month=1, day=1)
+            else:
+                quarter_end = today.replace(year=year, month=quarter_start_month + 3, day=1)
+            
+            data = self._calculate_period_data(user, quarter_start, quarter_end)
+            data['period'] = f"Q{quarter} {year}"
+            quarterly_data.append(data)
+        
+        quarterly_data.reverse()
+        return quarterly_data
+    
+    def _get_yearly_data(self, user, today):
+        yearly_data = []
+        
+        for i in range(3):
+            year = today.year - i
+            year_start = today.replace(year=year, month=1, day=1)
+            year_end = today.replace(year=year + 1, month=1, day=1)
+            
+            data = self._calculate_period_data(user, year_start, year_end)
+            data['period'] = str(year)
+            yearly_data.append(data)
+        
+        yearly_data.reverse()
+        return yearly_data
+    
+    def _calculate_period_data(self, user, start_date, end_date):
+        sales_amount = TransactionHistory.objects.filter(
+            user=user,
+            transaction_type='sale',
+            date__gte=start_date,
+            date__lt=end_date
+        ).aggregate(
+            total=Sum('sale_price')
+        )['total'] or Decimal('0')
+        
+        sales_items = TransactionItem.objects.filter(
+            transaction__user=user,
+            transaction__transaction_type='sale',
+            transaction__date__gte=start_date,
+            transaction__date__lt=end_date,
+            sale_price__isnull=False
+        ).aggregate(
+            total=Sum(F('quantity') * F('sale_price'))
+        )['total'] or Decimal('0')
+        
+        sales_amount = max(sales_amount, sales_items)
+        
+        purchase_amount = TransactionHistory.objects.filter(
+            user=user,
+            transaction_type='purchase',
+            date__gte=start_date,
+            date__lt=end_date
+        ).aggregate(
+            total=Sum('purchase_price')
+        )['total'] or Decimal('0')
+        
+        purchase_items = TransactionItem.objects.filter(
+            transaction__user=user,
+            transaction__transaction_type='purchase',
+            transaction__date__gte=start_date,
+            transaction__date__lt=end_date,
+            purchase_price__isnull=False
+        ).aggregate(
+            total=Sum(F('quantity') * F('purchase_price'))
+        )['total'] or Decimal('0')
+        
+        purchase_amount = max(purchase_amount, purchase_items)
+        
+        total_expenses = Decimal('0')
+        
+        product_expenses = Product.objects.filter(
+            owner=user,
+            date_purchased__gte=start_date,
+            date_purchased__lt=end_date
+        ).aggregate(
+            shipping=Sum('shipping_price') or Decimal('0'),
+            repairs=Sum('repair_cost') or Decimal('0'),
+            fees=Sum('fees') or Decimal('0'),
+            commission=Sum('commission') or Decimal('0')
+        )
+        
+        product_total_expenses = (
+            (product_expenses['shipping'] or Decimal('0')) +
+            (product_expenses['repairs'] or Decimal('0')) +
+            (product_expenses['fees'] or Decimal('0')) +
+            (product_expenses['commission'] or Decimal('0'))
+        )
+        
+        # 2. Expenses from TransactionHistory.expenses JSONField
+        transactions_with_expenses = TransactionHistory.objects.filter(
+            user=user,
+            date__gte=start_date,
+            date__lt=end_date
+        ).exclude(expenses={})
+        
+        transaction_expenses = Decimal('0')
+        for transaction in transactions_with_expenses:
+            if transaction.expenses:
+                for expense_type, amount in transaction.expenses.items():
+                    try:
+                        transaction_expenses += Decimal(str(amount))
+                    except (ValueError, TypeError):
+                        continue
+        
+        total_expenses = product_total_expenses + transaction_expenses
+        
+        return {
+            'sales': float(sales_amount),
+            'purchases': float(purchase_amount),
+            'expenses': float(total_expenses)
+        }
+    
 
 class IncomeBreakdownAPIView(APIView):
     permission_classes = [IsAuthenticated]
