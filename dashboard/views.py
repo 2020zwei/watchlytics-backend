@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from django.db import models
 from django.db.models import Sum, Count, Q, F, Avg
 from django.utils import timezone
 from datetime import datetime, timedelta
@@ -530,8 +531,64 @@ class IncomeBreakdownAPIView(APIView):
         except Exception as e:
             return Decimal('0')
     
+    def get_filtered_data(self, user, segment_type, year_start, year_end):
+        """Get detailed data based on segment type for filtering"""
+        try:
+            if segment_type == 'actual':
+                # Get actual transactions
+                transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__range=(year_start, year_end)
+                ).values('id', 'sale_price', 'date', 'product_name')
+                
+                transaction_items = TransactionItem.objects.filter(
+                    transaction__user=user,
+                    transaction__transaction_type='sale',
+                    transaction__date__range=(year_start, year_end)
+                ).select_related('transaction', 'product').values(
+                    'transaction__id', 'quantity', 'sale_price', 
+                    'transaction__date', 'product__name'
+                )
+                
+                return {
+                    'transactions': list(transactions),
+                    'transaction_items': list(transaction_items)
+                }
+                
+            elif segment_type == 'pending':
+                # Get pending/reserved products
+                products = Product.objects.filter(
+                    owner=user,
+                    availability='reserved'
+                ).values('id', 'name', 'website_price', 'sold_price', 'msrp')
+                
+                return {'products': list(products)}
+                
+            elif segment_type == 'remaining':
+                # Calculate remaining to target
+                actual_income = self.get_actual_income(user, year_start, year_end)
+                pending_income = self.get_pending_income(user)
+                target = self.calculate_target(actual_income, pending_income, user)
+                remaining = target - actual_income - pending_income
+                
+                # Get products that could contribute to remaining target
+                available_products = Product.objects.filter(
+                    owner=user,
+                    availability__in=['available', 'in_stock']
+                ).values('id', 'name', 'website_price', 'sold_price', 'msrp')
+                
+                return {
+                    'remaining_amount': float(remaining),
+                    'available_products': list(available_products)
+                }
+                
+        except Exception as e:
+            return {'error': str(e)}
+    
     def get(self, request):
         user = request.user
+        segment_filter = request.GET.get('segment')  # Get segment filter parameter
         
         try:
             current_year = timezone.now().year
@@ -547,8 +604,35 @@ class IncomeBreakdownAPIView(APIView):
                 'income': float(actual_income),
                 'pending': float(pending_income),
                 'year': current_year,
-                'progress': float(actual_income / target) if target > 0 else 0
+                'progress': float(actual_income / target) if target > 0 else 0,
+                'segments': {
+                    'actual': {
+                        'value': float(actual_income),
+                        'percentage': float(actual_income / target * 100) if target > 0 else 0,
+                        'label': 'Actual Income',
+                        'color': '#10B981'  # Green
+                    },
+                    'pending': {
+                        'value': float(pending_income),
+                        'percentage': float(pending_income / target * 100) if target > 0 else 0,
+                        'label': 'Pending Income',
+                        'color': '#F59E0B'  # Amber
+                    },
+                    'remaining': {
+                        'value': float(max(0, target - actual_income - pending_income)),
+                        'percentage': float(max(0, target - actual_income - pending_income) / target * 100) if target > 0 else 0,
+                        'label': 'Remaining to Target',
+                        'color': '#EF4444'  # Red
+                    }
+                }
             }
+            
+            # If segment filter is provided, include filtered data
+            if segment_filter and segment_filter in ['actual', 'pending', 'remaining']:
+                breakdown_data['filtered_data'] = self.get_filtered_data(
+                    user, segment_filter, year_start, year_end
+                )
+                breakdown_data['active_filter'] = segment_filter
             
             return Response(breakdown_data, status=status.HTTP_200_OK)
             
@@ -627,3 +711,150 @@ class DetailedAnalyticsAPIView(APIView):
         }
         
         return Response(analytics_data, status=status.HTTP_200_OK)
+    
+class IncomeReportsAPIView(APIView):
+    """API for income reports with clickable segments showing detailed data"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_date_range(self, request):
+        date_from = request.GET.get('date_from')
+        date_to = request.GET.get('date_to')
+        
+        if date_from and date_to:
+            year_start = datetime.strptime(date_from, '%Y-%m-%d').date()
+            year_end = datetime.strptime(date_to, '%Y-%m-%d').date()
+        else:
+            current_year = timezone.now().year
+            year_start = datetime(current_year, 1, 1).date()
+            year_end = datetime(current_year, 12, 31).date()
+            
+        return year_start, year_end
+    
+    def get_actual_income_data(self, user, year_start, year_end):
+        """Get detailed actual income data"""
+        transactions = TransactionHistory.objects.filter(
+            user=user,
+            transaction_type='sale',
+            date__range=(year_start, year_end)
+        ).select_related('customer').values(
+            'id', 'date', 'sale_price', 'name_of_trade',
+            customer_name=F('customer__name')
+        ).order_by('-date')
+        
+        monthly_summary = list(
+            TransactionHistory.objects.filter(
+                user=user,
+                transaction_type='sale',
+                date__range=(year_start, year_end)
+            ).extra(
+                select={'month': 'EXTRACT(month FROM date)'}
+            ).values('month').annotate(
+                total=Sum('sale_price'),
+                count=Count('id')
+            ).order_by('month')
+        )
+        
+        return {
+            'transactions': list(transactions),
+            'monthly_summary': monthly_summary
+        }
+    
+    def get_pending_income_data(self, user):
+        """Get detailed pending income data"""
+        products = Product.objects.filter(
+            owner=user,
+            availability='reserved'
+        ).values(
+            'id', 'model_name', 'website_price', 'sold_price',
+            'msrp', 'category_id', 'condition'
+        ).order_by('-msrp')
+        
+        return {
+            'products': list(products)
+        }
+    
+    def get_remaining_target_data(self, user, year_start, year_end):
+        """Get detailed data for remaining target"""
+        actual_income = TransactionHistory.objects.filter(
+            user=user,
+            transaction_type='sale',
+            date__range=(year_start, year_end)
+        ).aggregate(total=Sum('sale_price'))['total'] or Decimal('0')
+        
+        pending_income = Product.objects.filter(
+            owner=user,
+            availability='reserved'
+        ).aggregate(total=Sum('sold_price'))['total'] or Decimal('0')
+        
+        target = (actual_income + pending_income) * Decimal('1.2')
+        remaining = max(Decimal('0'), target - actual_income - pending_income)
+        
+        available_products = Product.objects.filter(
+            owner=user,
+            availability__in=['available', 'in_stock']
+        ).values(
+            'id', 'model_name', 'website_price', 'msrp'
+        ).order_by('-msrp')
+        
+        return {
+            'remaining_amount': float(remaining),
+            'target': float(target),
+            'available_products': list(available_products)
+        }
+    
+    def get(self, request):
+        user = request.user
+        segment_type = request.GET.get('segment', None)  # 'actual', 'pending', or 'remaining'
+        
+        try:
+            year_start, year_end = self.get_date_range(request)
+            response_data = {}
+            
+            if not segment_type:
+                # Return summary data if no segment specified
+                actual_income = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__range=(year_start, year_end)
+                ).aggregate(total=Sum('sale_price'))['total'] or Decimal('0')
+                
+                pending_income = Product.objects.filter(
+                    owner=user,
+                    availability='reserved'
+                ).aggregate(total=Sum('sold_price'))['total'] or Decimal('0')
+                
+                target = (actual_income + pending_income) * Decimal('1.2')
+                
+                response_data = {
+                    'summary': {
+                        'actual_income': float(actual_income),
+                        'pending_income': float(pending_income),
+                        'target': float(target),
+                        'progress': float(actual_income / target) if target > 0 else 0,
+                        'year': year_start.year
+                    }
+                }
+            else:
+                # Return detailed data for the requested segment
+                if segment_type == 'actual':
+                    response_data = self.get_actual_income_data(user, year_start, year_end)
+                elif segment_type == 'pending':
+                    response_data = self.get_pending_income_data(user)
+                elif segment_type == 'remaining':
+                    response_data = self.get_remaining_target_data(user, year_start, year_end)
+                else:
+                    return Response(
+                        {'error': 'Invalid segment type'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Could not generate reports',
+                    'detail': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

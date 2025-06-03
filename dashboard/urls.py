@@ -5,7 +5,8 @@ from .views import (
     IncomeBreakdownAPIView,
     DetailedAnalyticsAPIView,
     DrilldownSoldItemsAPIView,
-    ProfitAnalyticsAPIView
+    ProfitAnalyticsAPIView,
+    IncomeReportsAPIView
 )
 
 urlpatterns = [
@@ -13,6 +14,8 @@ urlpatterns = [
     path('expense-tracking/', ExpenseTrackingAPIView.as_view(), name='expense-tracking'),
     path('income-breakdown/', IncomeBreakdownAPIView.as_view(), name='income-breakdown'),
     path('detailed-analytics/', DetailedAnalyticsAPIView.as_view(), name='detailed-analytics'),
-     path('sold-items/', DrilldownSoldItemsAPIView.as_view(), name='sold-items-drilldown'),
+    path('sold-items/', DrilldownSoldItemsAPIView.as_view(), name='sold-items-drilldown'),
     path('profit-analytics/', ProfitAnalyticsAPIView.as_view(), name='profit-analytics'),
+    path('income-reports/', IncomeReportsAPIView.as_view(), name='income-reports'),
+
 ]
