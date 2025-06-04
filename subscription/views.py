@@ -20,13 +20,13 @@ import os
 logger = logging.getLogger(__name__)
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY', '')
 class PlanListAPIView(generics.ListAPIView):
-    queryset = Plan.objects.all()
+    queryset = Plan.objects.all().order_by('price')
     serializer_class = PlanSerializer
     permission_classes = [permissions.AllowAny]
     pagination_class = CustomPagination
 
 class PlanDetailAPIView(generics.RetrieveAPIView):
-    queryset = Plan.objects.all()
+    queryset = Plan.objects.all().order_by('price')
     serializer_class = PlanSerializer
     permission_classes = [permissions.AllowAny]
 
