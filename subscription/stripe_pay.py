@@ -346,6 +346,21 @@ def delete_payment_method(user, payment_method_id):
         if not user.stripe_customer_id:
             return {"success": False, "message": "No customer account found"}
             
+        try:
+            payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
+            
+            if payment_method.customer != user.stripe_customer_id:
+                return {
+                    "success": False, 
+                    "message": "Payment method is not attached to this customer"
+                }
+        except stripe.error.StripeError as e:
+            return {
+                "success": False,
+                "message": f"Payment method not found: {str(e)}",
+                "code": getattr(e, 'code', 'payment_method_not_found')
+            }
+        
         customer = stripe.Customer.retrieve(user.stripe_customer_id)
         default_payment_method = customer.get('invoice_settings', {}).get('default_payment_method')
         
@@ -364,6 +379,13 @@ def delete_payment_method(user, payment_method_id):
                         "default_payment_method": payment_methods.data[0].id
                     }
                 )
+            else:
+                stripe.Customer.modify(
+                    user.stripe_customer_id,
+                    invoice_settings={
+                        "default_payment_method": None
+                    }
+                )
             
         return {
             "success": True,
@@ -374,7 +396,7 @@ def delete_payment_method(user, payment_method_id):
         return {
             "success": False,
             "message": str(e),
-            "code": e.code
+            "code": getattr(e, 'code', 'stripe_error')
         }
     except Exception as e:
         return {
