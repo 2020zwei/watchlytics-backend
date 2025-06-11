@@ -482,7 +482,7 @@ class MonthlyProfitAPIView(APIView):
             
             return transaction_total if transaction_total > 0 else items_total
         
-        if period == 'week':
+        if period == 'weekly':
             # Get data for the last 12 weeks
             chart_data = []
             for i in range(12, -1, -1):
