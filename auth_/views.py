@@ -205,7 +205,7 @@ class UpdateProfileView(APIView):
         if password != confirm_password:
             return Response(
                     {
-                        'password': ['Passwords do not match']
+                        'message': 'Passwords do not match'
                     },
                     status=status.HTTP_404_NOT_FOUND
                 )
@@ -214,7 +214,7 @@ class UpdateProfileView(APIView):
         if password and user.check_password(password):
             return Response(
                 {
-                    'password': ['New password cannot be the same as the current password']
+                    'message': 'New password cannot be the same as the current password'
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
