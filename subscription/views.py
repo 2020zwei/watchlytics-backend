@@ -604,19 +604,44 @@ class CardOperationsAPIView(APIView):
                 'message': 'Card not found'
             }, status=status.HTTP_404_NOT_FOUND)
             
+        was_default = card.is_default
+        
         result = delete_payment_method(request.user, card.stripe_payment_method_id)
         
         if not result.get('success', False):
-            return Response({
-                'success': False,
-                'message': result.get('message', 'Failed to delete payment method')
-            }, status=status.HTTP_400_BAD_REQUEST)
+            error_message = result.get('message', '')
+            error_code = result.get('code', '')
+            
+            if 'not attached' in error_message.lower() or error_code == 'payment_method_not_found':
+                if was_default:
+                    next_card = UserCard.objects.filter(
+                        user=request.user
+                    ).exclude(id=card.id).order_by('-created_at').first()
+                    if next_card:
+                        next_card.is_default = True
+                        next_card.save()
+                
+                card.delete()
+                
+                return Response({
+                    'success': True,
+                    'message': 'Payment method removed successfully (was already detached from Stripe)'
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'success': False,
+                    'message': result.get('message', 'Failed to delete payment method')
+                }, status=status.HTTP_400_BAD_REQUEST)
         
-        if card.is_default:
-            next_card = UserCard.objects.filter(user=request.user).exclude(id=card.id).order_by('-created_at').first()
+        if was_default:
+            next_card = UserCard.objects.filter(
+                user=request.user
+            ).exclude(id=card.id).order_by('-created_at').first()
             if next_card:
-                next_card.is_default = True
-                next_card.save()
+                set_result = set_default_payment_method(request.user, next_card.stripe_payment_method_id)
+                if set_result.get('success'):
+                    next_card.is_default = True
+                    next_card.save()
         
         card.delete()
         
