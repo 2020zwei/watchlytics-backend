@@ -511,7 +511,7 @@ class MonthlyProfitAPIView(APIView):
                     'period': f"Week {week_start.isocalendar()[1]}",
                     'profit': float(profit) if profit >= 0 else 0.0,
                     'loss': float(abs(profit)) if profit < 0 else 0.0,
-                    'net_profit': float(profit)  # Add net profit for clarity
+                    'net_profit': float(profit)
                 })
             
             current_week_start = today - timedelta(days=today.weekday())
@@ -537,20 +537,17 @@ class MonthlyProfitAPIView(APIView):
             
             current_period_profit = current_period_sales - current_period_purchases
             
-        else:  # month period
+        else:  # month period - SIMPLIFIED LOGIC
+            from dateutil.relativedelta import relativedelta
             chart_data = []
             
+            # Get last 7 months (including current month)
             for i in range(6, -1, -1):
-                target_date = today.replace(day=1) - timedelta(days=1)  # Last day of previous month
-                for _ in range(i):
-                    target_date = target_date.replace(day=1) - timedelta(days=1)
+                # Calculate month start by going back i months from today
+                month_start = (today.replace(day=1) - relativedelta(months=i))
                 
-                month_start = target_date.replace(day=1)
-                # Get last day of month
-                if month_start.month == 12:
-                    month_end = month_start.replace(year=month_start.year + 1, month=1, day=1) - timedelta(days=1)
-                else:
-                    month_end = month_start.replace(month=month_start.month + 1, day=1) - timedelta(days=1)
+                # Get last day of the month
+                month_end = (month_start + relativedelta(months=1)) - timedelta(days=1)
                 
                 # Get sales for this month
                 sales_transactions = TransactionHistory.objects.filter(
@@ -572,10 +569,10 @@ class MonthlyProfitAPIView(APIView):
                 profit = sales - purchases
                 
                 chart_data.append({
-                    'period': month_start.strftime('%b %Y'),  # Include year for clarity
+                    'period': month_start.strftime('%b %Y'),
                     'profit': float(profit) if profit >= 0 else 0.0,
                     'loss': float(abs(profit)) if profit < 0 else 0.0,
-                    'net_profit': float(profit)  # Add net profit for clarity
+                    'net_profit': float(profit)
                 })
             
             # Current month calculation
@@ -609,14 +606,14 @@ class MonthlyProfitAPIView(APIView):
             'summary': {
                 'profit': {
                     'total': total_profit,
-                    'net_total': total_net_profit,  # This is the actual profit/loss
+                    'net_total': total_net_profit,
                     'periods': [period['period'] for period in chart_data]
                 },
                 'loss': {
                     'total': total_loss,
                     'view_type': period
                 },
-                'net_profit': total_net_profit  # Overall net profit/loss
+                'net_profit': total_net_profit
             },
             'chart_data': chart_data,
             'current_period': {
@@ -627,7 +624,6 @@ class MonthlyProfitAPIView(APIView):
                 'purchases': f"{current_period_purchases:,.0f}"
             }
         })
-
 class UserSpecificReportAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
