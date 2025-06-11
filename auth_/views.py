@@ -205,18 +205,18 @@ class UpdateProfileView(APIView):
         if password != confirm_password:
             return Response(
                     {
-                        'message': 'Passwords do not match'
+                        'password': ['Passwords do not match']
                     },
-                    status=status.HTTP_404_NOT_FOUND
+                    status=status.HTTP_400_BAD_REQUEST
                 )
         user = User.objects.get(id=request.user.id)
 
         if password and user.check_password(password):
             return Response(
                 {
-                    'message': 'New password cannot be the same as the current password'
+                    'password': ['New password cannot be the same as the current password']
                 },
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_400_BAD_REQUEST
             )
         serializer = UserUpdateSerializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
