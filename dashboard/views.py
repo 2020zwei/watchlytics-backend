@@ -8,6 +8,7 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 from calendar import month_name
 from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from transactions.models import TransactionHistory, TransactionItem
 from django.db.models.functions import Coalesce, TruncMonth
 from inventory.models import Product
@@ -460,7 +461,7 @@ class ExpenseTrackingAPIView(APIView):
                 for expense_type, amount in transaction.expenses.items():
                     try:
                         transaction_expenses += Decimal(str(amount))
-                    except (ValueError, TypeError):
+                    except (InvalidOperation, ValueError, TypeError):
                         continue
         
         total_expenses = product_total_expenses + transaction_expenses
