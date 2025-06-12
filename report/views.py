@@ -777,7 +777,7 @@ class PurchaseSalesReportAPIView(APIView):
         Get purchase and sales report with period filtering (month/week)
         """
         user = request.user
-        period = request.query_params.get('period', 'month')  # month or week
+        period = request.query_params.get('period', 'monthly')  # month or week
         
         today = timezone.now().date()
         
@@ -808,7 +808,7 @@ class PurchaseSalesReportAPIView(APIView):
             
             return max(transaction_total, items_total)
         
-        if period == 'week':
+        if period == 'weekly':
             # Get data for the last 12 weeks
             start_date = today - timedelta(weeks=12)
             
@@ -912,7 +912,7 @@ class PurchaseSalesReportAPIView(APIView):
             },
             'chart_data': chart_data,
             'current_period': {
-                'period': today.strftime('%b') if period == 'month' else f"Week {today.isocalendar()[1]}",
+                'period': today.strftime('%b') if period == 'monthly' else f"Week {today.isocalendar()[1]}",
                 'value': format(current_period_sales, ',.0f')
             }
         })
@@ -936,70 +936,126 @@ class PurchaseSalesReportAPIView(APIView):
                 total=Coalesce(Sum('purchase_price'), Decimal('0'))
             )['total']
         
-        # Calculate totals for the current month from transactions
-        current_month_transactions = TransactionHistory.objects.filter(
-            user=user,
-            transaction_type='sale',
-            date__month=current_month,
-            date__year=current_year
-        )
-        current_month_sales = get_sales_total(current_month_transactions)
+        # Determine if we're showing weekly or monthly data
+        is_weekly = request.query_params.get('period', '').lower() == 'weekly'
         
-        months_data = []
-        for i in range(6, -1, -1): 
-            month = today.month - i
-            year = today.year
-            while month < 1:
-                month += 12
-                year -= 1
-            
-            month_start = date(year, month, 1)
-            if month == 12:
-                month_end = date(year+1, 1, 1)
-            else:
-                month_end = date(year, month+1, 1)
-            
-            sales_transactions = TransactionHistory.objects.filter(
+        # Calculate totals for the current period from transactions
+        if not is_weekly:
+            # Monthly data
+            current_period_transactions = TransactionHistory.objects.filter(
                 user=user,
                 transaction_type='sale',
-                date__gte=month_start,
-                date__lt=month_end
+                date__month=current_month,
+                date__year=current_year
             )
-            sales = get_sales_total(sales_transactions)
-            
-            purchase_transactions = TransactionHistory.objects.filter(
+            current_period_sales = get_sales_total(current_period_transactions)
+        else:
+            # Weekly data
+            start_of_week = today - timedelta(days=today.weekday())
+            end_of_week = start_of_week + timedelta(days=6)
+            current_period_transactions = TransactionHistory.objects.filter(
                 user=user,
-                transaction_type='purchase',
-                date__gte=month_start,
-                date__lt=month_end
+                transaction_type='sale',
+                date__gte=start_of_week,
+                date__lte=end_of_week
             )
-            purchases = get_purchases_total(purchase_transactions)
-            
-            months_data.append({
-                'month': month_start.strftime('%b'),  # Short month name
-                'date': month_start.strftime('%b'),
-                'purchase': float(purchases),
-                'sale': float(sales)
-            })
+            current_period_sales = get_sales_total(current_period_transactions)
         
-        total_purchases = sum(m['purchase'] for m in months_data)
-        total_sales = sum(m['sale'] for m in months_data)
+        periods_data = []
+        
+        if not is_weekly:
+            # Monthly data (6 months back)
+            for i in range(6, -1, -1): 
+                month = today.month - i
+                year = today.year
+                while month < 1:
+                    month += 12
+                    year -= 1
+                
+                month_start = date(year, month, 1)
+                if month == 12:
+                    month_end = date(year+1, 1, 1)
+                else:
+                    month_end = date(year, month+1, 1)
+                
+                sales_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__gte=month_start,
+                    date__lt=month_end
+                )
+                sales = get_sales_total(sales_transactions)
+                
+                purchase_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='purchase',
+                    date__gte=month_start,
+                    date__lt=month_end
+                )
+                purchases = get_purchases_total(purchase_transactions)
+                
+                periods_data.append({
+                    'period': month_start.strftime('%b'),  # Short month name
+                    'date': month_start.strftime('%b'),
+                    'purchase': float(purchases),
+                    'sale': float(sales)
+                })
+        else:
+            # Weekly data (6 weeks back)
+            current_week_number = today.isocalendar()[1]  # Get current week number
+            for i in range(6, -1, -1):
+                week_number = current_week_number - i
+                year = today.year
+                
+                # Handle year transition for week numbers
+                if week_number < 1:
+                    week_number += 52
+                    year -= 1
+                
+                start_date = date.fromisocalendar(year, week_number, 1)
+                end_date = date.fromisocalendar(year, week_number, 7)
+                
+                sales_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='sale',
+                    date__gte=start_date,
+                    date__lte=end_date
+                )
+                sales = get_sales_total(sales_transactions)
+                
+                purchase_transactions = TransactionHistory.objects.filter(
+                    user=user,
+                    transaction_type='purchase',
+                    date__gte=start_date,
+                    date__lte=end_date
+                )
+                purchases = get_purchases_total(purchase_transactions)
+                
+                periods_data.append({
+                    'period': f"Week {week_number}",
+                    'date': f"Week {week_number}",
+                    'purchase': float(purchases),
+                    'sale': float(sales)
+                })
+        
+        total_purchases = sum(m['purchase'] for m in periods_data)
+        total_sales = sum(m['sale'] for m in periods_data)
         
         response_data = {
             'summary': {
                 'purchases': {
                     'total': total_purchases,
-                    'months': [m['month'] for m in months_data]  # All months
+                    'periods': [m['period'] for m in periods_data]
                 },
                 'sales': {
                     'total': total_sales,
-                    'view_type': view_type  # "month" or "week"
+                    'view_type': 'weekly' if is_weekly else 'month'
                 }
             },
-            'chart_data': months_data,
-            'current_month': {
-                'month': today.strftime('%b'),
-                'value': format(current_month_sales, ',.0f')  # Formatted with commas
+            'chart_data': periods_data,
+            'current_period': {
+                'period': today.strftime('%b') if not is_weekly else f"Week {current_week_number}",
+                'value': format(current_period_sales, ',.0f')
             }
         }
         
