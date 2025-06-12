@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Customer
+from transactions.models import TransactionHistory, TransactionItem
 
 class CustomerSerializer(serializers.ModelSerializer):
     status_display = serializers.SerializerMethodField()
@@ -106,3 +107,74 @@ class CustomerDetailSerializer(CustomerSerializer):
         except:
             pass
         return invoices
+
+class DashboardMetricsSerializer(serializers.Serializer):
+    total_customers = serializers.IntegerField()
+    avg_spending = serializers.DecimalField(max_digits=10, decimal_places=2)
+    follow_ups_due = serializers.IntegerField()
+    new_leads_this_month = serializers.IntegerField()
+
+
+class TransactionItemSerializer(serializers.ModelSerializer):
+    model_name = serializers.CharField(source='product.model_name', read_only=True)
+    brand = serializers.CharField(source='product.category.name', read_only=True)
+    reference_number = serializers.CharField(source='product.product_id', read_only=True)
+    # image_url = serializers.CharField(source='product.image.url', read_only=True)
+    total_purchase_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    total_sale_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    image_url = serializers.SerializerMethodField()
+    class Meta:
+        model = TransactionItem
+        fields = [
+            'id',
+            'product',
+            'reference_number',
+            'model_name',
+            'brand',
+            'image_url',
+            'quantity',
+            'purchase_price',
+            'sale_price',
+            'total_purchase_price',
+            'total_sale_price'
+        ]
+
+    def get_image_url(self, obj):
+        if obj.product and obj.product.image:
+            request = self.context.get('request')
+            return request.build_absolute_uri(obj.product.image.url) if request else obj.product.image.url
+        return None
+
+
+class CustomerOrderSerializer(serializers.ModelSerializer):
+    transaction_items = TransactionItemSerializer(many=True, read_only=True)
+    customer_name = serializers.CharField(source='customer.name', read_only=True)
+    total_purchase_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    total_sale_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    profit = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    items_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = TransactionHistory
+        fields = [
+            'id',
+            'name_of_trade',
+            'transaction_type',
+            'date',
+            'purchase_price',
+            'sale_price',
+            'sale_category',
+            'customer_name',
+            'notes',
+            'expenses',
+            'total_purchase_price',
+            'total_sale_price',
+            'profit',
+            'items_count',
+            'transaction_items',
+            'created_at',
+            'updated_at'
+        ]
+    
+    def get_items_count(self, obj):
+        return obj.transaction_items.count()

@@ -1,4 +1,5 @@
-from django.db.models import Count, Sum, Max, Q, F, Value, BooleanField, DecimalField
+from django.db.models import Count, Sum, Max, Q, F, Value, BooleanField, DecimalField, Avg
+from rest_framework.views import APIView
 from django.db.models.functions import Coalesce
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
@@ -7,7 +8,17 @@ from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Customer
 from .serializers import CustomerSerializer, CustomerDetailSerializer, CustomerCreateSerializer
-from transactions.models import TransactionHistory
+from transactions.serializers import TransactionHistorySerializer
+from rest_framework import generics
+from django.utils import timezone
+from .models import Customer, FollowUp
+from transactions.models import TransactionHistory, TransactionItem
+from .serializers import DashboardMetricsSerializer, CustomerOrderSerializer
+from django.shortcuts import get_object_or_404
+from django.db.models import Prefetch
+from datetime import datetime, timedelta
+from decimal import Decimal
+
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
@@ -16,12 +27,20 @@ class CustomerViewSet(viewsets.ModelViewSet):
     serializer_class = CustomerSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['status']
-    search_fields = ['name', 'email', 'phone', 'address', 'notes']
+    search_fields = ['name', 'email', 'phone']
     ordering_fields = ['name', 'created_at', 'updated_at', 'orders_count', 'last_purchase_date', 'total_spending']
     ordering = ['-created_at']
     
     def get_queryset(self):
         queryset = self.queryset.filter(user=self.request.user)
+        
+        universal_search = self.request.query_params.get('search', None)
+        if universal_search:
+            queryset = queryset.filter(
+                Q(name__icontains=universal_search) |
+                Q(email__icontains=universal_search) |
+                Q(phone__icontains=universal_search)
+            )
         
         queryset = queryset.annotate(
             orders_count=Count('transactions_customer', distinct=True),
@@ -153,3 +172,148 @@ class CustomerViewSet(viewsets.ModelViewSet):
             'message': 'Export functionality placeholder',
             'data': serializer.data
         })
+    
+class CustomerTransactionsAPIView(generics.ListAPIView):
+    serializer_class = TransactionHistorySerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        customer_id = self.kwargs.get('customer_id')
+        return TransactionHistory.objects.filter(
+            customer_id=customer_id,
+            user=self.request.user
+        ).prefetch_related('transaction_items', 'transaction_items__product').order_by('-date')
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        
+        # Add customer information to the response
+        customer_id = self.kwargs.get('customer_id')
+        try:
+            customer = Customer.objects.get(id=customer_id, user=request.user)
+            response_data = {
+                'customer': {
+                    'id': customer.id,
+                    'name': customer.name,
+                    'email': customer.email,
+                    'phone': customer.phone,
+                },
+                'transactions': serializer.data
+            }
+            return Response(response_data)
+        except Customer.DoesNotExist:
+            return Response({'error': 'Customer not found'}, status=404)
+        
+class CustomerDashboardMetricsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        # Total Customers
+        total_customers = Customer.objects.filter(user=user).count()
+        
+        # Average Spending
+        avg_spending = TransactionHistory.objects.filter(
+            user=user,
+            transaction_type='sale',
+            sale_price__isnull=False
+        ).aggregate(avg=Avg('sale_price'))['avg'] or 0
+        
+        target_avg_spending = 10000
+        avg_spending_percent = (avg_spending / target_avg_spending) * 100 if target_avg_spending > 0 else 0
+        follow_ups_due = FollowUp.objects.filter(
+            user=user,
+            status='pending',
+            due_date__lte=timezone.now().date()
+        ).count()
+        
+        start_of_month = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        new_leads_this_month = Customer.objects.filter(
+            user=user,
+            created_at__gte=start_of_month
+        ).count()
+        
+        data = {
+            'total_customers': total_customers,
+            'avg_spending': round(float(avg_spending_percent), 2),  # or keep as Decimal
+            'follow_ups_due': follow_ups_due,
+            'new_leads_this_month': new_leads_this_month
+        }
+        
+        serializer = DashboardMetricsSerializer(data)
+        return Response(serializer.data)
+    
+class CustomerOrderListView(generics.ListAPIView):
+    """
+    API to fetch all orders/transactions for a specific customer
+    """
+    serializer_class = CustomerOrderSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        customer_id = self.kwargs.get('customer_id')
+        
+        # Verify customer belongs to the authenticated user
+        customer = get_object_or_404(
+            Customer, 
+            id=customer_id, 
+            user=self.request.user
+        )
+        
+        # Get all transactions for this customer with related items
+        queryset = TransactionHistory.objects.filter(
+            customer=customer,
+            user=self.request.user
+        ).select_related(
+            'customer'
+        ).prefetch_related(
+            Prefetch(
+                'transaction_items',
+                queryset=TransactionItem.objects.select_related('product')
+            )
+        ).order_by('-date', '-created_at')
+        
+        return queryset
+    
+    def list(self, request, *args, **kwargs):
+        customer_id = self.kwargs.get('customer_id')
+        
+        try:
+            customer = Customer.objects.get(
+                id=customer_id, 
+                user=request.user
+            )
+        except Customer.DoesNotExist:
+            return Response(
+                {'error': 'Customer not found or access denied'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        
+        # Add customer info and summary statistics
+        total_orders = queryset.count()
+        total_sales_amount = sum(
+            transaction.total_sale_price 
+            for transaction in queryset 
+            if transaction.transaction_type == 'sale'
+        )
+        
+        response_data = {
+            'customer': {
+                'id': customer.id,
+                'name': customer.name,
+                'email': customer.email,
+                'phone': customer.phone,
+            },
+            'summary': {
+                'total_orders': total_orders,
+                'total_sales_amount': float(total_sales_amount),
+            },
+            'orders': serializer.data
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
