@@ -9,7 +9,7 @@ class CustomerSerializer(serializers.ModelSerializer):
     total_spending = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True, default=0)
     follow_up_display = serializers.SerializerMethodField()
     customer_tags = serializers.CharField(read_only=True)
-    
+    status = serializers.SerializerMethodField()
     class Meta:
         model = Customer
         fields = [
@@ -50,6 +50,9 @@ class CustomerSerializer(serializers.ModelSerializer):
         if existing.exists():
             raise serializers.ValidationError("You already have a customer with this email address.")
         return value
+    
+    def get_status(self, obj):
+        return getattr(obj, 'is_active_customer', obj.status)
 
 
 class CustomerCreateSerializer(serializers.ModelSerializer):

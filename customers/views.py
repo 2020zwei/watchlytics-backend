@@ -48,8 +48,9 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 Q(phone__icontains=universal_search)
             )
         
-        thirty_days_ago = timezone.now().date() - timedelta(days=30)
-        ninety_days_ago = timezone.now().date() - timedelta(days=90)
+        today = timezone.now().date()
+        thirty_days_ago = today - timedelta(days=30)
+        ninety_days_ago = today - timedelta(days=90)
         
         avg_spending_subquery = Customer.objects.filter(
             user=self.request.user
@@ -72,51 +73,111 @@ class CustomerViewSet(viewsets.ModelViewSet):
                     output_field=DecimalField()), 
                 Value(0, output_field=DecimalField())
             ),
-            follow_up=Value(False, output_field=BooleanField()),
+
+            follow_up=Case(
+                When(
+                    orders_count=0,
+                    then=Value(True)
+                ),
+                When(
+                    Q(last_purchase_date__lt=thirty_days_ago) & Q(orders_count__gt=0),
+                    then=Value(True)
+                ),
+                When(
+                    last_purchase_date__gte=thirty_days_ago,
+                    then=Value(False)
+                ),
+                default=Value(True),
+                output_field=BooleanField()
+            ),
+            
+            is_active_customer=Case(
+                When(
+                    Q(last_purchase_date__lt=ninety_days_ago) & Q(orders_count__gt=0),
+                    then=Value(False)
+                ),
+                When(
+                    Q(last_purchase_date__gte=ninety_days_ago) & Q(orders_count__gt=0),
+                    then=Value(True)
+                ),
+                When(
+                    orders_count=0,
+                    then=Value(True)
+                ),
+                default=Value(True),
+                output_field=BooleanField()
+            ),
             
             customer_tags=Case(
                 When(
-                    Q(total_spending__gt=high_value_threshold) & 
-                    Q(last_purchase_date__gte=thirty_days_ago),
-                    then=Value('High Value')
+                    orders_count=0,
+                    then=Value('Potential')
                 ),
-                When(
-                    orders_count__gt=3,
-                    then=Value('Repeat Buyer')
-                ),
+                
                 When(
                     Q(last_purchase_date__lt=ninety_days_ago) & 
                     Q(orders_count__gt=0),
                     then=Value('Inactive')
                 ),
+                
+                # 3. At Risk customers (30-90 days since last purchase)
                 When(
                     Q(last_purchase_date__lt=thirty_days_ago) & 
-                    Q(last_purchase_date__gte=ninety_days_ago),
+                    Q(last_purchase_date__gte=ninety_days_ago) &
+                    Q(orders_count__gt=0),
                     then=Value('At Risk')
                 ),
+                
+                # 4. VIP customers (highest value + frequent + recent)
+                When(
+                    Q(total_spending__gt=high_value_threshold * 2) & 
+                    Q(orders_count__gt=5) &
+                    Q(last_purchase_date__gte=thirty_days_ago),
+                    then=Value('VIP')
+                ),
+                
+                # 5. High Value customers (high spending + recent purchase)
+                When(
+                    Q(total_spending__gt=high_value_threshold) & 
+                    Q(last_purchase_date__gte=thirty_days_ago),
+                    then=Value('High Value')
+                ),
+                
+                # 6. Repeat buyers (4+ orders + recent activity)
+                When(
+                    Q(orders_count__gte=4) &
+                    Q(last_purchase_date__gte=thirty_days_ago),
+                    then=Value('Repeat Buyer')
+                ),
+                
+                # 7. New customers (exactly 1 order + recent)
                 When(
                     Q(orders_count=1) & 
                     Q(last_purchase_date__gte=thirty_days_ago),
                     then=Value('New Customer')
                 ),
+                
+                # 8. Regular customers (2-3 orders + recent activity)
                 When(
-                    Q(total_spending__gt=high_value_threshold * 2) & 
-                    Q(orders_count__gt=5),
-                    then=Value('VIP')
-                ),
-                When(
-                    orders_count=0,
-                    then=Value('Potential')
-                ),
-                When(
-                    Q(status=True) & Q(orders_count__gt=0),
+                    Q(orders_count__gte=2) &
+                    Q(orders_count__lte=3) &
+                    Q(last_purchase_date__gte=thirty_days_ago),
                     then=Value('Regular')
                 ),
+                
+                # 9. Fallback for any remaining active customers
+                When(
+                    Q(orders_count__gt=0) &
+                    Q(last_purchase_date__gte=thirty_days_ago),
+                    then=Value('Active')
+                ),
+                
                 default=Value('Untagged'),
                 output_field=CharField(max_length=20)
             )
         )
         
+        # Apply filters - Use the model's status field, not calculated field
         status_filter = self.request.query_params.get('status')
         if status_filter:
             if status_filter.lower() in ('active', 'true', '1'):
@@ -124,6 +185,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
             elif status_filter.lower() in ('inactive', 'false', '0'):
                 queryset = queryset.filter(status=False)
         
+        # Spending filters
         min_spending = self.request.query_params.get('min_spending')
         max_spending = self.request.query_params.get('max_spending')
         if min_spending:
@@ -131,6 +193,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
         if max_spending:
             queryset = queryset.filter(total_spending__lte=max_spending)
         
+        # Order count filters
         min_orders = self.request.query_params.get('min_orders')
         max_orders = self.request.query_params.get('max_orders')
         if min_orders:
@@ -138,16 +201,26 @@ class CustomerViewSet(viewsets.ModelViewSet):
         if max_orders:
             queryset = queryset.filter(orders_count__lte=max_orders)
         
-        follow_up = self.request.query_params.get('follow_up')
-        if follow_up:
-            if follow_up.lower() in ('yes', 'true', '1'):
+        # Follow up filter
+        follow_up_filter = self.request.query_params.get('follow_up')
+        if follow_up_filter:
+            if follow_up_filter.lower() in ('yes', 'true', '1'):
                 queryset = queryset.filter(follow_up=True)
-            elif follow_up.lower() in ('no', 'false', '0'):
+            elif follow_up_filter.lower() in ('no', 'false', '0'):
                 queryset = queryset.filter(follow_up=False)
         
+        # Customer tag filter
         tag_filter = self.request.query_params.get('customer_tag')
         if tag_filter:
             queryset = queryset.filter(customer_tags=tag_filter)
+        
+        # Activity status filter (new filter for 90-day rule)
+        activity_filter = self.request.query_params.get('activity_status')
+        if activity_filter:
+            if activity_filter.lower() in ('active', 'true', '1'):
+                queryset = queryset.filter(is_active_customer=True)
+            elif activity_filter.lower() in ('inactive', 'false', '0'):
+                queryset = queryset.filter(is_active_customer=False)
                 
         return queryset
     
@@ -170,20 +243,104 @@ class CustomerViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(customer)
         return Response(serializer.data)
     
-    @action(detail=True, methods=['post'])
-    def mark_for_follow_up(self, request, pk=None):
+    @action(detail=False, methods=['post'])
+    def update_customer_statuses(self, request):
+        """
+        Update all customer statuses based on 90-day purchase rule
+        """
+        ninety_days_ago = timezone.now().date() - timedelta(days=90)
+        
+        # Get customers with their last purchase dates
+        customers_with_purchase_data = Customer.objects.filter(
+            user=request.user
+        ).annotate(
+            last_purchase=Max('transactions_customer__date'),
+            has_purchases=Count('transactions_customer')
+        )
+        
+        updated_count = 0
+        
+        for customer in customers_with_purchase_data:
+            new_status = True  # Default to active
+            
+            # If customer has purchases, check the 90-day rule
+            if customer.has_purchases > 0 and customer.last_purchase:
+                if customer.last_purchase < ninety_days_ago:
+                    new_status = False  # Inactive if last purchase > 90 days
+            
+            # Update only if status changed
+            if customer.status != new_status:
+                customer.status = new_status
+                customer.save(update_fields=['status'])
+                updated_count += 1
+        
+        return Response({
+            'message': f'Updated {updated_count} customer statuses based on 90-day rule',
+            'updated_count': updated_count
+        })
+    
+    @action(detail=True, methods=['patch'])
+    def update_status_by_activity(self, request, pk=None):
+        """
+        Update individual customer status based on purchase activity
+        """
         customer = self.get_object()
+        ninety_days_ago = timezone.now().date() - timedelta(days=90)
+        
+        # Get last purchase date
+        last_purchase = customer.transactions_customer.aggregate(
+            last_date=Max('date')
+        )['last_date']
+        
+        if last_purchase and last_purchase < ninety_days_ago:
+            customer.status = False  # Inactive
+            message = f'{customer.name} marked as inactive (last purchase: {last_purchase})'
+        else:
+            customer.status = True   # Active
+            message = f'{customer.name} marked as active (last purchase: {last_purchase or "Never"})'
+        
+        customer.save(update_fields=['status'])
         
         serializer = self.get_serializer(customer)
-        return Response(serializer.data)
+        return Response({
+            'message': message,
+            'customer': serializer.data
+        })
+    
+    @action(detail=True, methods=['post'])
+    def mark_for_follow_up(self, request, pk=None):
+        """
+        Create a follow-up task for this customer
+        """
+        customer = self.get_object()
+        
+        # Create a follow-up entry
+        due_date = request.data.get('due_date', timezone.now().date() + timedelta(days=7))
+        notes = request.data.get('notes', f'Follow up with {customer.name}')
+        
+        follow_up = FollowUp.objects.create(
+            user=request.user,
+            customer=customer,
+            due_date=due_date,
+            notes=notes,
+            status='pending'
+        )
+        
+        return Response({
+            'message': f'Follow-up scheduled for {customer.name}',
+            'follow_up_id': follow_up.id,
+            'due_date': follow_up.due_date,
+            'notes': follow_up.notes
+        })
     
     @action(detail=False, methods=['get'])
     def stats(self, request):
         queryset = self.get_queryset()
         
         total_customers = queryset.count()
-        active_customers = queryset.filter(status=True).count()
-        inactive_customers = queryset.filter(status=False).count()
+        active_customers = queryset.filter(is_active_customer=True).count()
+        inactive_customers = queryset.filter(is_active_customer=False).count()
+        customers_needing_followup = queryset.filter(follow_up=True).count()
         
         total_spending = queryset.aggregate(
             total=Coalesce(
@@ -209,10 +366,12 @@ class CustomerViewSet(viewsets.ModelViewSet):
             'total_customers': total_customers,
             'active_customers': active_customers,
             'inactive_customers': inactive_customers,
+            'customers_needing_followup': customers_needing_followup,
             'total_spending': total_spending,
             'average_spending': avg_spending,
             'top_spenders': list(top_spenders),
-            'tag_distribution': list(tag_stats)
+            'tag_distribution': list(tag_stats),
+            'note': 'Active/Inactive based on calculated 90-day rule, not model status field'
         }
         
         return Response(data)
@@ -236,6 +395,32 @@ class CustomerViewSet(viewsets.ModelViewSet):
         return Response(transaction_data)
     
     @action(detail=False, methods=['get'])
+    def customers_needing_followup(self, request):
+        """
+        Get all customers that need follow-up
+        """
+        queryset = self.get_queryset().filter(follow_up=True)
+        serializer = self.get_serializer(queryset, many=True)
+        
+        return Response({
+            'count': queryset.count(),
+            'customers': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def inactive_customers(self, request):
+        """
+        Get customers who haven't purchased in 90+ days
+        """
+        queryset = self.get_queryset().filter(is_active_customer=False)
+        serializer = self.get_serializer(queryset, many=True)
+        
+        return Response({
+            'count': queryset.count(),
+            'customers': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
     def export(self, request):
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
@@ -256,14 +441,15 @@ class CustomerViewSet(viewsets.ModelViewSet):
         return Response({
             'available_tags': [tag for tag in available_tags if tag],
             'tag_descriptions': {
+                'VIP': 'Top-tier customers with highest spending (2x threshold) and 5+ orders with recent activity',
                 'High Value': 'Customers with above-average spending and recent purchases',
-                'VIP': 'Top-tier customers with highest spending and frequent purchases', 
-                'Repeat Buyer': 'Customers with more than 3 orders',
+                'Repeat Buyer': 'Loyal customers with 4+ orders and recent activity',
+                'New Customer': 'Recent customers with exactly 1 purchase in the last 30 days',
+                'Regular': 'Customers with 2-3 orders and recent activity',
+                'Active': 'Other customers with recent purchase activity',
                 'Inactive': 'Customers with no purchases in the last 90 days',
-                'At Risk': 'Customers who haven\'t purchased in 30 days but bought within 90 days',
-                'New Customer': 'Recent customers with their first purchase in the last 30 days',
-                'Potential': 'Prospects with contact information but no purchases yet',
-                'Regular': 'Active customers with standard purchase patterns'
+                'At Risk': 'Customers who haven\'t purchased in 30-90 days',
+                'Potential': 'Prospects with contact information but no purchases yet'
             }
         })
     
