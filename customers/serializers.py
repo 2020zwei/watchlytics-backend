@@ -178,3 +178,72 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
     
     def get_items_count(self, obj):
         return obj.transaction_items.count()
+    
+class CustomerBulkSerializer(serializers.ModelSerializer):
+    total_spent = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    last_purchase_date = serializers.SerializerMethodField()
+    tags_list = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Customer
+        fields = [
+            'id', 'name', 'email', 'phone', 'status', 
+            'total_spent', 'last_purchase_date', 'tags_list',
+            'created_at'
+        ]
+    
+    def get_last_purchase_date(self, obj):
+        last_purchase = obj.transactions_customer.filter(
+            transaction_type='sale'
+        ).order_by('-date').first()
+        return last_purchase.date if last_purchase else None
+    
+    def get_tags_list(self, obj):
+        return [{'id': tag.id, 'name': tag.name, 'color': tag.color} for tag in obj.tags.all()]
+
+
+class BulkActionSerializer(serializers.Serializer):
+    BULK_ACTION_CHOICES = [
+        ('activate', 'Activate'),
+        ('deactivate', 'Deactivate'),
+        ('mark_follow_up', 'Mark for Follow-up'),
+        ('add_tag', 'Add Tag'),
+        ('remove_tag', 'Remove Tag'),
+        ('send_newsletter', 'Send Newsletter'),
+        ('delete', 'Delete'),
+    ]
+    
+    customer_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        min_length=1,
+        max_length=100  # Limit bulk operations
+    )
+    action = serializers.ChoiceField(choices=BULK_ACTION_CHOICES)
+    action_data = serializers.JSONField(default=dict, required=False)
+    
+    def validate_customer_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError("Duplicate customer IDs are not allowed")
+        return value
+    
+    def validate(self, data):
+        action = data.get('action')
+        action_data = data.get('action_data', {})
+        
+        # Validate action-specific requirements
+        if action == 'mark_follow_up' and not action_data.get('due_date'):
+            raise serializers.ValidationError({
+                'action_data': 'due_date is required for follow-up action'
+            })
+        
+        if action in ['add_tag', 'remove_tag'] and not action_data.get('tag_id'):
+            raise serializers.ValidationError({
+                'action_data': 'tag_id is required for tag actions'
+            })
+        
+        if action == 'send_newsletter' and not action_data.get('message'):
+            raise serializers.ValidationError({
+                'action_data': 'message is required for newsletter action'
+            })
+        
+        return data
