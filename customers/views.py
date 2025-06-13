@@ -1,4 +1,4 @@
-from django.db.models import Count, Sum, Max, Q, F, Value, BooleanField, DecimalField, Avg
+from django.db.models import Count, Sum, Max, Q, F, Value, BooleanField, DecimalField, Avg, Case, When, CharField
 from rest_framework.views import APIView
 from django.db.models.functions import Coalesce
 from rest_framework import viewsets, status, filters
@@ -47,6 +47,21 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 Q(phone__icontains=universal_search)
             )
         
+        thirty_days_ago = timezone.now().date() - timedelta(days=30)
+        ninety_days_ago = timezone.now().date() - timedelta(days=90)
+        
+        avg_spending_subquery = Customer.objects.filter(
+            user=self.request.user
+        ).aggregate(
+            avg_total=Coalesce(
+                Avg('transactions_customer__sale_price',
+                    filter=Q(transactions_customer__transaction_type='sale')),
+                Value(0, output_field=DecimalField())
+            )
+        )['avg_total'] or 0
+        
+        high_value_threshold = float(avg_spending_subquery) * 1.5 if avg_spending_subquery else 1000
+        
         queryset = queryset.annotate(
             orders_count=Count('transactions_customer', distinct=True),
             last_purchase_date=Max('transactions_customer__date'),
@@ -56,7 +71,49 @@ class CustomerViewSet(viewsets.ModelViewSet):
                     output_field=DecimalField()), 
                 Value(0, output_field=DecimalField())
             ),
-            follow_up=Value(False, output_field=BooleanField())
+            follow_up=Value(False, output_field=BooleanField()),
+            
+            customer_tags=Case(
+                When(
+                    Q(total_spending__gt=high_value_threshold) & 
+                    Q(last_purchase_date__gte=thirty_days_ago),
+                    then=Value('High Value')
+                ),
+                When(
+                    orders_count__gt=3,
+                    then=Value('Repeat Buyer')
+                ),
+                When(
+                    Q(last_purchase_date__lt=ninety_days_ago) & 
+                    Q(orders_count__gt=0),
+                    then=Value('Inactive')
+                ),
+                When(
+                    Q(last_purchase_date__lt=thirty_days_ago) & 
+                    Q(last_purchase_date__gte=ninety_days_ago),
+                    then=Value('At Risk')
+                ),
+                When(
+                    Q(orders_count=1) & 
+                    Q(last_purchase_date__gte=thirty_days_ago),
+                    then=Value('New Customer')
+                ),
+                When(
+                    Q(total_spending__gt=high_value_threshold * 2) & 
+                    Q(orders_count__gt=5),
+                    then=Value('VIP')
+                ),
+                When(
+                    orders_count=0,
+                    then=Value('Potential')
+                ),
+                When(
+                    Q(status=True) & Q(orders_count__gt=0),
+                    then=Value('Regular')
+                ),
+                default=Value('Untagged'),
+                output_field=CharField(max_length=20)
+            )
         )
         
         status_filter = self.request.query_params.get('status')
@@ -86,6 +143,10 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(follow_up=True)
             elif follow_up.lower() in ('no', 'false', '0'):
                 queryset = queryset.filter(follow_up=False)
+        
+        tag_filter = self.request.query_params.get('customer_tag')
+        if tag_filter:
+            queryset = queryset.filter(customer_tags=tag_filter)
                 
         return queryset
     
@@ -139,13 +200,18 @@ class CustomerViewSet(viewsets.ModelViewSet):
         
         top_spenders = queryset.order_by('-total_spending')[:5].values('id', 'name', 'total_spending')
         
+        tag_stats = queryset.values('customer_tags').annotate(
+            count=Count('customer_tags')
+        ).order_by('-count')
+        
         data = {
             'total_customers': total_customers,
             'active_customers': active_customers,
             'inactive_customers': inactive_customers,
             'total_spending': total_spending,
             'average_spending': avg_spending,
-            'top_spenders': list(top_spenders)
+            'top_spenders': list(top_spenders),
+            'tag_distribution': list(tag_stats)
         }
         
         return Response(data)
@@ -176,6 +242,28 @@ class CustomerViewSet(viewsets.ModelViewSet):
         return Response({
             'message': 'Export functionality placeholder',
             'data': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def tag_filters(self, request):
+        """
+        Get available customer tags for filtering
+        """
+        queryset = self.get_queryset()
+        available_tags = queryset.values_list('customer_tags', flat=True).distinct()
+        
+        return Response({
+            'available_tags': [tag for tag in available_tags if tag],
+            'tag_descriptions': {
+                'High Value': 'Customers with above-average spending and recent purchases',
+                'VIP': 'Top-tier customers with highest spending and frequent purchases', 
+                'Repeat Buyer': 'Customers with more than 3 orders',
+                'Inactive': 'Customers with no purchases in the last 90 days',
+                'At Risk': 'Customers who haven\'t purchased in 30 days but bought within 90 days',
+                'New Customer': 'Recent customers with their first purchase in the last 30 days',
+                'Potential': 'Prospects with contact information but no purchases yet',
+                'Regular': 'Active customers with standard purchase patterns'
+            }
         })
     
 class CustomerTransactionsAPIView(generics.ListAPIView):

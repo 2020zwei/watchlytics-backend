@@ -8,6 +8,7 @@ class CustomerSerializer(serializers.ModelSerializer):
     last_purchase_date = serializers.DateField(read_only=True, allow_null=True)
     total_spending = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True, default=0)
     follow_up_display = serializers.SerializerMethodField()
+    customer_tags = serializers.CharField(read_only=True)
     
     class Meta:
         model = Customer
@@ -15,7 +16,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             'id', 'name', 'email', 'phone', 'address', 'notes', 
             'status', 'status_display', 'profile_picture',
             'orders_count', 'last_purchase_date', 'total_spending',
-            'follow_up_display'
+            'follow_up_display', 'customer_tags'
         ]
         read_only_fields = ['created_at', 'updated_at']
     
