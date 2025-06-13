@@ -307,30 +307,55 @@ class CustomerDashboardMetricsAPIView(APIView):
         # Total Customers
         total_customers = Customer.objects.filter(user=user).count()
         
-        # Average Spending
-        avg_spending = TransactionHistory.objects.filter(
+        # Average Spending - Corrected to use TransactionItem data
+        # Get all sale transactions with their items
+        sale_transactions = TransactionHistory.objects.filter(
             user=user,
-            transaction_type='sale',
-            sale_price__isnull=False
-        ).aggregate(avg=Avg('sale_price'))['avg'] or 0
+            transaction_type='sale'
+        ).prefetch_related('transaction_items')
         
-        target_avg_spending = 10000
-        avg_spending_percent = (avg_spending / target_avg_spending) * 100 if target_avg_spending > 0 else 0
+        # Calculate average spending per customer
+        customer_totals = {}
+        for transaction in sale_transactions:
+            customer_id = transaction.customer_id
+            if customer_id:  # Only count transactions with customers
+                if customer_id not in customer_totals:
+                    customer_totals[customer_id] = Decimal('0')
+                # Use the property method to get total sale price
+                customer_totals[customer_id] += transaction.total_sale_price
+        
+        # Calculate average spending per customer
+        if customer_totals:
+            avg_spending = sum(customer_totals.values()) / len(customer_totals)
+            avg_spending = float(avg_spending)
+        else:
+            avg_spending = 0
+        
+        # Alternative: Average spending per transaction (if you prefer this metric)
+        # transaction_totals = [float(t.total_sale_price) for t in sale_transactions if t.total_sale_price > 0]
+        # avg_spending_per_transaction = sum(transaction_totals) / len(transaction_totals) if transaction_totals else 0
+        
+        # Follow-ups due
         follow_ups_due = FollowUp.objects.filter(
             user=user,
             status='pending',
             due_date__lte=timezone.now().date()
         ).count()
         
+        # New leads this month
         start_of_month = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         new_leads_this_month = Customer.objects.filter(
             user=user,
             created_at__gte=start_of_month
         ).count()
         
+        # Additional useful metrics
+        total_revenue = sum(customer_totals.values()) if customer_totals else 0
+        customers_with_purchases = len(customer_totals)
+        
         data = {
             'total_customers': total_customers,
-            'avg_spending': round(float(avg_spending_percent), 2),  # or keep as Decimal
+            'avg_spending': round(avg_spending, 2),
             'follow_ups_due': follow_ups_due,
             'new_leads_this_month': new_leads_this_month
         }
