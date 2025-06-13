@@ -1,4 +1,5 @@
 from django.db.models import Count, Sum, Max, Q, F, Value, BooleanField, DecimalField, Avg, Case, When, CharField
+from django.db import models
 from rest_framework.views import APIView
 from django.db.models.functions import Coalesce
 from rest_framework import viewsets, status, filters
@@ -307,33 +308,52 @@ class CustomerDashboardMetricsAPIView(APIView):
         # Total Customers
         total_customers = Customer.objects.filter(user=user).count()
         
-        # Average Spending - Corrected to use TransactionItem data
-        # Get all sale transactions with their items
-        sale_transactions = TransactionHistory.objects.filter(
+        # Average Spending - Fixed calculation using TransactionItem properly
+        from django.db.models import Sum, F
+        
+        # Method 1: Calculate total spending per customer using database aggregation
+        customer_spending = TransactionHistory.objects.filter(
             user=user,
-            transaction_type='sale'
-        ).prefetch_related('transaction_items')
+            transaction_type='sale',
+            customer__isnull=False  # Only transactions with customers
+        ).values('customer').annotate(
+            total_spent=Sum(
+                F('transaction_items__quantity') * F('transaction_items__sale_price'),
+                output_field=models.DecimalField()
+            )
+        ).aggregate(
+            avg_spending=Avg('total_spent')
+        )['avg_spending']
         
-        # Calculate average spending per customer
-        customer_totals = {}
-        for transaction in sale_transactions:
-            customer_id = transaction.customer_id
-            if customer_id:  # Only count transactions with customers
-                if customer_id not in customer_totals:
-                    customer_totals[customer_id] = Decimal('0')
-                # Use the property method to get total sale price
-                customer_totals[customer_id] += transaction.total_sale_price
+        # Get the actual average spending amount
+        avg_spending_amount = float(customer_spending or 0)
         
-        # Calculate average spending per customer
-        if customer_totals:
-            avg_spending = sum(customer_totals.values()) / len(customer_totals)
-            avg_spending = float(avg_spending)
-        else:
-            avg_spending = 0
+        # Set target based on your business logic (you can adjust this)
+        # Option 1: Fixed target
+        target_spending = 50000  # Set your target amount
         
-        # Alternative: Average spending per transaction (if you prefer this metric)
-        # transaction_totals = [float(t.total_sale_price) for t in sale_transactions if t.total_sale_price > 0]
-        # avg_spending_per_transaction = sum(transaction_totals) / len(transaction_totals) if transaction_totals else 0
+        # Option 2: Dynamic target based on historical data (uncomment if preferred)
+        # target_spending = avg_spending_amount * 1.2 if avg_spending_amount > 0 else 10000
+        
+        # Calculate percentage of target achieved
+        avg_spending_percent = (avg_spending_amount / target_spending * 100) if target_spending > 0 else 0
+        
+        # Final value to return (as percentage)
+        avg_spending = round(avg_spending_percent, 2)
+        
+        # Alternative: If the above doesn't work due to model structure, use this approach
+        # customer_totals = {}
+        # for customer in Customer.objects.filter(user=user):
+        #     total_spent = sum(
+        #         transaction.total_sale_price 
+        #         for transaction in customer.transactions_customer.filter(transaction_type='sale')
+        #     )
+        #     if total_spent > 0:
+        #         customer_totals[customer.id] = total_spent
+        # 
+        # avg_spending_amount = sum(customer_totals.values()) / len(customer_totals) if customer_totals else 0
+        # avg_spending_percent = (avg_spending_amount / target_spending * 100) if target_spending > 0 else 0
+        # avg_spending = round(avg_spending_percent, 2)
         
         # Follow-ups due
         follow_ups_due = FollowUp.objects.filter(
@@ -349,9 +369,9 @@ class CustomerDashboardMetricsAPIView(APIView):
             created_at__gte=start_of_month
         ).count()
         
-        # Additional useful metrics
-        total_revenue = sum(customer_totals.values()) if customer_totals else 0
-        customers_with_purchases = len(customer_totals)
+        # Additional useful metrics (optional)
+        # total_revenue = sum(customer_totals.values()) if customer_totals else 0
+        # customers_with_purchases = len(customer_totals)
         
         data = {
             'total_customers': total_customers,
