@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Customer
+from transactions.models import TransactionHistory, TransactionItem
 
 class CustomerSerializer(serializers.ModelSerializer):
     status_display = serializers.SerializerMethodField()
@@ -7,6 +8,7 @@ class CustomerSerializer(serializers.ModelSerializer):
     last_purchase_date = serializers.DateField(read_only=True, allow_null=True)
     total_spending = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True, default=0)
     follow_up_display = serializers.SerializerMethodField()
+    customer_tags = serializers.CharField(read_only=True)
     
     class Meta:
         model = Customer
@@ -14,7 +16,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             'id', 'name', 'email', 'phone', 'address', 'notes', 
             'status', 'status_display', 'profile_picture',
             'orders_count', 'last_purchase_date', 'total_spending',
-            'follow_up_display'
+            'follow_up_display', 'customer_tags'
         ]
         read_only_fields = ['created_at', 'updated_at']
     
@@ -106,3 +108,143 @@ class CustomerDetailSerializer(CustomerSerializer):
         except:
             pass
         return invoices
+
+class DashboardMetricsSerializer(serializers.Serializer):
+    total_customers = serializers.IntegerField()
+    avg_spending = serializers.DecimalField(max_digits=10, decimal_places=2)
+    follow_ups_due = serializers.IntegerField()
+    new_leads_this_month = serializers.IntegerField()
+
+
+class TransactionItemSerializer(serializers.ModelSerializer):
+    model_name = serializers.CharField(source='product.model_name', read_only=True)
+    brand = serializers.CharField(source='product.category.name', read_only=True)
+    reference_number = serializers.CharField(source='product.product_id', read_only=True)
+    # image_url = serializers.CharField(source='product.image.url', read_only=True)
+    total_purchase_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    total_sale_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    image_url = serializers.SerializerMethodField()
+    class Meta:
+        model = TransactionItem
+        fields = [
+            'id',
+            'product',
+            'reference_number',
+            'model_name',
+            'brand',
+            'image_url',
+            'quantity',
+            'purchase_price',
+            'sale_price',
+            'total_purchase_price',
+            'total_sale_price'
+        ]
+
+    def get_image_url(self, obj):
+        if obj.product and obj.product.image:
+            request = self.context.get('request')
+            return request.build_absolute_uri(obj.product.image.url) if request else obj.product.image.url
+        return None
+
+
+class CustomerOrderSerializer(serializers.ModelSerializer):
+    transaction_items = TransactionItemSerializer(many=True, read_only=True)
+    customer_name = serializers.CharField(source='customer.name', read_only=True)
+    total_purchase_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    total_sale_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    profit = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    items_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = TransactionHistory
+        fields = [
+            'id',
+            'name_of_trade',
+            'transaction_type',
+            'date',
+            'purchase_price',
+            'sale_price',
+            'sale_category',
+            'customer_name',
+            'notes',
+            'expenses',
+            'total_purchase_price',
+            'total_sale_price',
+            'profit',
+            'items_count',
+            'transaction_items',
+            'created_at',
+            'updated_at'
+        ]
+    
+    def get_items_count(self, obj):
+        return obj.transaction_items.count()
+    
+class CustomerBulkSerializer(serializers.ModelSerializer):
+    total_spent = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    last_purchase_date = serializers.SerializerMethodField()
+    tags_list = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Customer
+        fields = [
+            'id', 'name', 'email', 'phone', 'status', 
+            'total_spent', 'last_purchase_date', 'tags_list',
+            'created_at'
+        ]
+    
+    def get_last_purchase_date(self, obj):
+        last_purchase = obj.transactions_customer.filter(
+            transaction_type='sale'
+        ).order_by('-date').first()
+        return last_purchase.date if last_purchase else None
+    
+    def get_tags_list(self, obj):
+        return [{'id': tag.id, 'name': tag.name, 'color': tag.color} for tag in obj.tags.all()]
+
+
+class BulkActionSerializer(serializers.Serializer):
+    BULK_ACTION_CHOICES = [
+        ('activate', 'Activate'),
+        ('deactivate', 'Deactivate'),
+        ('mark_follow_up', 'Mark for Follow-up'),
+        ('add_tag', 'Add Tag'),
+        ('remove_tag', 'Remove Tag'),
+        ('send_newsletter', 'Send Newsletter'),
+        ('delete', 'Delete'),
+    ]
+    
+    customer_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        min_length=1,
+        max_length=100  # Limit bulk operations
+    )
+    action = serializers.ChoiceField(choices=BULK_ACTION_CHOICES)
+    action_data = serializers.JSONField(default=dict, required=False)
+    
+    def validate_customer_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError("Duplicate customer IDs are not allowed")
+        return value
+    
+    def validate(self, data):
+        action = data.get('action')
+        action_data = data.get('action_data', {})
+        
+        # Validate action-specific requirements
+        if action == 'mark_follow_up' and not action_data.get('due_date'):
+            raise serializers.ValidationError({
+                'action_data': 'due_date is required for follow-up action'
+            })
+        
+        if action in ['add_tag', 'remove_tag'] and not action_data.get('tag_id'):
+            raise serializers.ValidationError({
+                'action_data': 'tag_id is required for tag actions'
+            })
+        
+        if action == 'send_newsletter' and not action_data.get('message'):
+            raise serializers.ValidationError({
+                'action_data': 'message is required for newsletter action'
+            })
+        
+        return data
