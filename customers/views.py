@@ -293,11 +293,15 @@ class CustomerViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['patch'])
     def toggle_status(self, request, pk=None):
         customer = self.get_object()
+        old_status = "active" if customer.status else "inactive"
         customer.status = not customer.status
         customer.save()
         
-        serializer = self.get_serializer(customer)
-        return Response(serializer.data)
+        new_status = "active" if customer.status else "inactive"
+        
+        return Response({
+            'message': f'Customer status updated successfully from {old_status} to {new_status}'
+        })
     
     @action(detail=False, methods=['post'])
     def update_customer_statuses(self, request):
@@ -348,19 +352,21 @@ class CustomerViewSet(viewsets.ModelViewSet):
             last_date=Max('date')
         )['last_date']
         
+        old_status = "active" if customer.status else "inactive"
+        
         if last_purchase and last_purchase < ninety_days_ago:
             customer.status = False  # Inactive
-            message = f'{customer.name} marked as inactive (last purchase: {last_purchase})'
+            new_status = "inactive"
+            message = f'Customer status updated successfully to inactive (last purchase: {last_purchase})'
         else:
             customer.status = True   # Active
-            message = f'{customer.name} marked as active (last purchase: {last_purchase or "Never"})'
+            new_status = "active"
+            message = f'Customer status updated successfully to active (last purchase: {last_purchase or "Never"})'
         
         customer.save(update_fields=['status'])
         
-        serializer = self.get_serializer(customer)
         return Response({
-            'message': message,
-            'customer': serializer.data
+            'message': message
         })
     
     @action(detail=True, methods=['post'])
@@ -509,6 +515,64 @@ class CustomerViewSet(viewsets.ModelViewSet):
             }
         })
     
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        
+        # Get the fields that are being updated
+        updated_fields = list(serializer.validated_data.keys())
+        
+        self.perform_update(serializer)
+        
+        if len(updated_fields) == 1:
+            field_name = updated_fields[0].replace('_', ' ').title()
+            message = f'{field_name} updated successfully'
+        else:
+            message = 'Customer updated successfully'
+        
+        return Response({
+            'message': message
+        })
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
+
+    def update_with_details(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        
+        field_mapping = {
+            'name': 'Name',
+            'email': 'Email',
+            'phone': 'Phone',
+            'address': 'Address',
+            'status': 'Status',
+            'notes': 'Notes'
+        }
+        
+        updated_fields = []
+        for field in serializer.validated_data.keys():
+            readable_name = field_mapping.get(field, field.replace('_', ' ').title())
+            updated_fields.append(readable_name)
+        
+        self.perform_update(serializer)
+        
+        if len(updated_fields) == 1:
+            message = f'{updated_fields[0]} updated successfully'
+        elif len(updated_fields) == 2:
+            message = f'{updated_fields[0]} and {updated_fields[1]} updated successfully'
+        else:
+            message = f'{", ".join(updated_fields[:-1])} and {updated_fields[-1]} updated successfully'
+        
+        return Response({
+            'message': message
+        })
+
 class CustomerTransactionsAPIView(generics.ListAPIView):
     serializer_class = TransactionHistorySerializer
     permission_classes = [IsAuthenticated]
