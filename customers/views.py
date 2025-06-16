@@ -18,6 +18,7 @@ from transactions.models import TransactionHistory, TransactionItem
 from .serializers import DashboardMetricsSerializer, CustomerOrderSerializer, CustomerBulkSerializer, BulkActionSerializer
 from django.shortcuts import get_object_or_404
 from django.db.models import Prefetch
+from django.utils import timezone
 from datetime import datetime, timedelta
 from decimal import Decimal
 from django.conf import settings
@@ -51,6 +52,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
         today = timezone.now().date()
         thirty_days_ago = today - timedelta(days=30)
         ninety_days_ago = today - timedelta(days=90)
+        seven_days_ago = today - timedelta(days=7)
         
         avg_spending_subquery = Customer.objects.filter(
             user=self.request.user
@@ -74,6 +76,29 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 Value(0, output_field=DecimalField())
             ),
 
+            follow_up_status=Case(
+                When(
+                    orders_count=0,
+                    then=Value('yes')
+                ),
+                When(
+                    Q(last_purchase_date__lt=thirty_days_ago) & Q(orders_count__gt=0),
+                    then=Value('yes')
+                ),
+                When(
+                    Q(last_purchase_date__lt=seven_days_ago) & 
+                    Q(last_purchase_date__gte=thirty_days_ago) &
+                    Q(orders_count__gt=0),
+                    then=Value('upcoming')
+                ),
+                When(
+                    last_purchase_date__gte=seven_days_ago,
+                    then=Value('no')
+                ),
+                default=Value('yes'),
+                output_field=CharField(max_length=10)
+            ),
+            
             follow_up=Case(
                 When(
                     orders_count=0,
@@ -201,13 +226,15 @@ class CustomerViewSet(viewsets.ModelViewSet):
         if max_orders:
             queryset = queryset.filter(orders_count__lte=max_orders)
         
-        # Follow up filter
+        # Updated follow up filter to handle yes/no/upcoming
         follow_up_filter = self.request.query_params.get('follow_up')
         if follow_up_filter:
             if follow_up_filter.lower() in ('yes', 'true', '1'):
-                queryset = queryset.filter(follow_up=True)
+                queryset = queryset.filter(follow_up_status='yes')
             elif follow_up_filter.lower() in ('no', 'false', '0'):
-                queryset = queryset.filter(follow_up=False)
+                queryset = queryset.filter(follow_up_status='no')
+            elif follow_up_filter.lower() == 'upcoming':
+                queryset = queryset.filter(follow_up_status='upcoming')
         
         # Customer tag filter
         tag_filter = self.request.query_params.get('customer_tag')
@@ -221,6 +248,35 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(is_active_customer=True)
             elif activity_filter.lower() in ('inactive', 'false', '0'):
                 queryset = queryset.filter(is_active_customer=False)
+                
+        return queryset
+
+    def get_queryset_alternative(self):
+        today = timezone.now().date()
+        seven_days_from_now = today + timedelta(days=7)
+        queryset = queryset.annotate(
+            
+            
+            upcoming_follow_up=Case(
+                When(
+                    Q(followup_customer__due_date__lte=seven_days_from_now) &
+                    Q(followup_customer__due_date__gte=today) &
+                    Q(followup_customer__status='pending'),
+                    then=Value(True)
+                ),
+                default=Value(False),
+                output_field=BooleanField()
+            )
+        )
+        
+        follow_up_filter = self.request.query_params.get('follow_up')
+        if follow_up_filter:
+            if follow_up_filter.lower() in ('yes', 'true', '1'):
+                queryset = queryset.filter(follow_up=True)
+            elif follow_up_filter.lower() in ('no', 'false', '0'):
+                queryset = queryset.filter(follow_up=False)
+            elif follow_up_filter.lower() == 'upcoming':
+                queryset = queryset.filter(upcoming_follow_up=True)
                 
         return queryset
     
