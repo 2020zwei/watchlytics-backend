@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from .models import Customer
 from transactions.models import TransactionHistory, TransactionItem
+from django.utils import timezone
+
 
 class CustomerSerializer(serializers.ModelSerializer):
     status_display = serializers.SerializerMethodField()
