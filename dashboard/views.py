@@ -50,6 +50,28 @@ class DashboardStatsAPIView(APIView):
             if sales_data['total_quantity_sold'] > 0:
                 average_profit_per_unit = total_profit / sales_data['total_quantity_sold']
             
+            transaction_profit_data = TransactionItem.objects.filter(
+                transaction__user=user,
+                transaction__transaction_type='sale',
+                sale_price__isnull=False,
+                purchase_price__isnull=False
+            ).aggregate(
+                total_transaction_profit=Coalesce(
+                    Sum(F('quantity') * (F('sale_price') - F('purchase_price'))), 
+                    Decimal('0')
+                ),
+                transaction_count=Count('transaction_id', distinct=True)
+            )
+            
+            average_profit_per_transaction = Decimal('0')
+            if transaction_profit_data['transaction_count'] > 0:
+                average_profit_per_transaction = (
+                    transaction_profit_data['total_transaction_profit'] / 
+                    transaction_profit_data['transaction_count']
+                )
+            
+            # Alternative method if you need item-level calculation (commented out)
+            """
             sold_transactions = TransactionItem.objects.filter(
                 transaction__user=user,
                 transaction__transaction_type='sale',
@@ -59,13 +81,15 @@ class DashboardStatsAPIView(APIView):
             
             transaction_profits = []
             for item in sold_transactions:
-                if item.sale_price and item.purchase_price:
+                # Fixed: Added null checks to prevent errors
+                if item.sale_price is not None and item.purchase_price is not None and item.quantity is not None:
                     item_profit = (item.sale_price - item.purchase_price) * item.quantity
                     transaction_profits.append(item_profit)
             
             average_profit_per_transaction = Decimal('0')
             if transaction_profits:
                 average_profit_per_transaction = sum(transaction_profits) / len(transaction_profits)
+            """
             
             stats_data = {
                 'manage_in_stock': product_stats['in_stock'],
