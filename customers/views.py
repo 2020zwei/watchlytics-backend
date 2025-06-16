@@ -1,4 +1,4 @@
-from django.db.models import Count, Sum, Max, Q, F, Value, BooleanField, DecimalField, Avg, Case, When, CharField
+from django.db.models import Count, Sum, Max, Q, F, Value, BooleanField, DecimalField, Avg, Case, When, CharField, Exists, Subquery, OuterRef
 from django.db import models
 from rest_framework.views import APIView
 from django.db.models.functions import Coalesce
@@ -95,24 +95,18 @@ class CustomerViewSet(viewsets.ModelViewSet):
                     last_purchase_date__gte=seven_days_ago,
                     then=Value('no')
                 ),
-                default=Value('yes'),
+                default=Value('yes'),  # This makes any uncaught cases return 'yes'
                 output_field=CharField(max_length=10)
             ),
+
             
+            # Keep the boolean follow_up field for backward compatibility
             follow_up=Case(
                 When(
-                    orders_count=0,
+                    follow_up_status='yes',
                     then=Value(True)
                 ),
-                When(
-                    Q(last_purchase_date__lt=thirty_days_ago) & Q(orders_count__gt=0),
-                    then=Value(True)
-                ),
-                When(
-                    last_purchase_date__gte=thirty_days_ago,
-                    then=Value(False)
-                ),
-                default=Value(True),
+                default=Value(False),
                 output_field=BooleanField()
             ),
             
@@ -372,28 +366,67 @@ class CustomerViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def mark_for_follow_up(self, request, pk=None):
         """
-        Create a follow-up task for this customer
+        Improved follow-up creation with better validation
         """
         customer = self.get_object()
+        serializer = FollowUpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         
-        # Create a follow-up entry
-        due_date = request.data.get('due_date', timezone.now().date() + timedelta(days=7))
-        notes = request.data.get('notes', f'Follow up with {customer.name}')
+        data = serializer.validated_data
+        due_date = data.get('due_date')
+        notes = data.get('notes', f'Follow up with {customer.name}')
+        status = data.get('status', 'pending')
+        
+        # Validate due date is not in the past for pending follow-ups
+        if status == 'pending' and due_date < timezone.now().date():
+            raise ValidationError("Due date cannot be in the past for pending follow-ups")
         
         follow_up = FollowUp.objects.create(
             user=request.user,
             customer=customer,
             due_date=due_date,
             notes=notes,
-            status='pending'
+            status=status
         )
         
         return Response({
-            'message': f'Follow-up scheduled for {customer.name}',
-            'follow_up_id': follow_up.id,
-            'due_date': follow_up.due_date,
-            'notes': follow_up.notes
-        })
+            'message': f'Follow-up created for {customer.name}',
+            'data': FollowUpSerializer(follow_up).data
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'])
+    def follow_up_stats(self, request):
+        """
+        Get statistics about follow-ups
+        """
+        today = timezone.now().date()
+        
+        stats = {
+            'total_pending': FollowUp.objects.filter(
+                user=request.user,
+                status='pending',
+                due_date__gte=today
+            ).count(),
+            
+            'overdue': FollowUp.objects.filter(
+                user=request.user,
+                status='pending',
+                due_date__lt=today
+            ).count(),
+            
+            'completed': FollowUp.objects.filter(
+                user=request.user,
+                status='completed'
+            ).count(),
+            
+            'upcoming_this_week': FollowUp.objects.filter(
+                user=request.user,
+                status='pending',
+                due_date__range=[today, today + timedelta(days=7)]
+            ).count()
+        }
+        
+        return Response(stats)
     
     @action(detail=False, methods=['get'])
     def stats(self, request):
@@ -402,7 +435,11 @@ class CustomerViewSet(viewsets.ModelViewSet):
         total_customers = queryset.count()
         active_customers = queryset.filter(is_active_customer=True).count()
         inactive_customers = queryset.filter(is_active_customer=False).count()
-        customers_needing_followup = queryset.filter(follow_up=True).count()
+        
+        # Updated follow-up stats to use follow_up_status
+        customers_needing_followup = queryset.filter(follow_up_status='yes').count()
+        customers_upcoming_followup = queryset.filter(follow_up_status='upcoming').count()
+        customers_no_followup = queryset.filter(follow_up_status='no').count()
         
         total_spending = queryset.aggregate(
             total=Coalesce(
@@ -415,8 +452,8 @@ class CustomerViewSet(viewsets.ModelViewSet):
         
         customers_with_transactions = queryset.filter(transactions_customer__isnull=False).distinct().count()
         avg_spending = (total_spending / customers_with_transactions 
-                       if customers_with_transactions > 0 
-                       else 0)
+                    if customers_with_transactions > 0 
+                    else 0)
         
         top_spenders = queryset.order_by('-total_spending')[:5].values('id', 'name', 'total_spending')
         
@@ -429,6 +466,13 @@ class CustomerViewSet(viewsets.ModelViewSet):
             'active_customers': active_customers,
             'inactive_customers': inactive_customers,
             'customers_needing_followup': customers_needing_followup,
+            'customers_upcoming_followup': customers_upcoming_followup,
+            'customers_no_followup': customers_no_followup,
+            'follow_up_breakdown': {
+                'yes': customers_needing_followup,
+                'upcoming': customers_upcoming_followup,
+                'no': customers_no_followup
+            },
             'total_spending': total_spending,
             'average_spending': avg_spending,
             'top_spenders': list(top_spenders),
@@ -459,9 +503,22 @@ class CustomerViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def customers_needing_followup(self, request):
         """
-        Get all customers that need follow-up
+        Get all customers that need follow-up (yes status)
         """
-        queryset = self.get_queryset().filter(follow_up=True)
+        queryset = self.get_queryset().filter(follow_up_status='yes')
+        serializer = self.get_serializer(queryset, many=True)
+        
+        return Response({
+            'count': queryset.count(),
+            'customers': serializer.data
+        })
+
+    @action(detail=False, methods=['get'])
+    def customers_upcoming_followup(self, request):
+        """
+        Get all customers with upcoming follow-up
+        """
+        queryset = self.get_queryset().filter(follow_up_status='upcoming')
         serializer = self.get_serializer(queryset, many=True)
         
         return Response({
@@ -469,6 +526,26 @@ class CustomerViewSet(viewsets.ModelViewSet):
             'customers': serializer.data
         })
     
+    @action(detail=False, methods=['get'])
+    def follow_up_breakdown(self, request):
+        """
+        Get breakdown of all follow-up statuses
+        """
+        queryset = self.get_queryset()
+        
+        breakdown = queryset.values('follow_up_status').annotate(
+            count=Count('follow_up_status')
+        ).order_by('follow_up_status')
+        
+        return Response({
+            'breakdown': list(breakdown),
+            'descriptions': {
+                'yes': 'Customers who need immediate follow-up (no orders or >30 days since last purchase)',
+                'upcoming': 'Customers who may need follow-up soon (7-30 days since last purchase)',
+                'no': 'Customers who don\'t need follow-up (purchased within last 7 days)'
+            }
+        })
+
     @action(detail=False, methods=['get'])
     def inactive_customers(self, request):
         """
@@ -937,28 +1014,39 @@ class CustomerBulkActionsView(APIView):
         elif action == 'mark_follow_up':
             due_date = action_data.get('due_date')
             notes = action_data.get('notes', '')
+            status = action_data.get('status', 'pending')  # Add status option
             
             if not due_date:
                 raise ValueError("Due date is required for follow-up action")
+            
+            # Validate status
+            valid_statuses = ['pending', 'completed', 'canceled']
+            if status not in valid_statuses:
+                raise ValueError(f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
             
             due_date = datetime.strptime(due_date, '%Y-%m-%d').date()
             
             follow_ups_created = []
             for customer in customers:
-                follow_up, created = FollowUp.objects.get_or_create(
+                follow_up, created = FollowUp.objects.update_or_create(
                     user=user,
                     customer=customer,
                     due_date=due_date,
-                    defaults={'notes': notes, 'status': 'pending'}
+                    defaults={
+                        'notes': notes,
+                        'status': status,
+                        'completed_at': timezone.now() if status == 'completed' else None
+                    }
                 )
                 if created:
-                    follow_ups_created.append(follow_up)
+                    follow_ups_created.append(follow_up.id)
                     results['processed_count'] += 1
                 else:
-                    results['failed_count'] += 1
-                    results['details'].append(f'Follow-up already exists for {customer.name}')
+                    results['details'].append(f'Follow-up updated for {customer.name}')
+                    results['processed_count'] += 1  # Count updates as processed too
             
-            results['message'] = f'{len(follow_ups_created)} follow-ups created successfully'
+            results['message'] = f'{len(follow_ups_created)} follow-ups processed successfully'
+            results['follow_up_ids'] = follow_ups_created  # Return IDs for reference
         
         elif action == 'add_tag':
             tag_id = action_data.get('tag_id')

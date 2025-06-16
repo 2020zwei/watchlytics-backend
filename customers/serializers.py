@@ -24,9 +24,30 @@ class CustomerSerializer(serializers.ModelSerializer):
         return 'Active' if obj.status else 'Inactive'
     
     def get_follow_up_display(self, obj):
-        if hasattr(obj, 'follow_up'):
-            return 'Yes' if obj.follow_up else 'No'
-        return 'No'
+        # First check if we have the annotated field
+        if hasattr(obj, 'follow_up_status'):
+            status = obj.follow_up_status
+        else:
+            # Fallback calculation if annotation isn't present
+            today = timezone.now().date()
+            if obj.orders_count == 0:
+                status = 'yes'
+            elif obj.last_purchase_date:
+                days_since = (today - obj.last_purchase_date).days
+                if days_since > 30:
+                    status = 'yes'
+                elif 7 <= days_since <= 30:
+                    status = 'upcoming'
+                else:
+                    status = 'no'
+            else:
+                status = 'yes'
+        
+        return {
+            'yes': 'Yes',
+            'upcoming': 'Upcoming',
+            'no': 'No'
+        }.get(status, 'No')
     
     def to_representation(self, instance):
         data = super().to_representation(instance)
