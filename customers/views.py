@@ -1014,7 +1014,9 @@ class CustomerBulkActionsView(APIView):
         elif action == 'mark_follow_up':
             due_date = action_data.get('due_date')
             notes = action_data.get('notes', '')
-            status = action_data.get('status', 'pending')  # Add status option
+            status = action_data.get('status', 'pending')
+            send_email = action_data.get('send_email', True)  # New parameter
+            email_subject = action_data.get('subject', '"Follow-up Reminder: Your Recent Inquiry"')
             
             if not due_date:
                 raise ValueError("Due date is required for follow-up action")
@@ -1024,9 +1026,15 @@ class CustomerBulkActionsView(APIView):
             if status not in valid_statuses:
                 raise ValueError(f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
             
+            def generate_follow_up_email(customer_name, due_date, notes):
+                return f"Hi {customer_name},\n\nThis is a follow-up regarding your recent inquiry. We have scheduled a follow-up for {due_date}.\n\nNotes: {notes}\n\nBest regards,\nWatchlytics"
+            
             due_date = datetime.strptime(due_date, '%Y-%m-%d').date()
             
             follow_ups_created = []
+            emails_to_send = []
+            email_failed_count = 0
+            
             for customer in customers:
                 follow_up, created = FollowUp.objects.update_or_create(
                     user=user,
@@ -1038,15 +1046,64 @@ class CustomerBulkActionsView(APIView):
                         'completed_at': timezone.now() if status == 'completed' else None
                     }
                 )
+
                 if created:
                     follow_ups_created.append(follow_up.id)
                     results['processed_count'] += 1
                 else:
                     results['details'].append(f'Follow-up updated for {customer.name}')
-                    results['processed_count'] += 1  # Count updates as processed too
+                    results['processed_count'] += 1
+                
+                if send_email:
+                    if customer.email:
+                        personalized_message = generate_follow_up_email(
+                            customer.name or 'Valued Customer',
+                            due_date.strftime('%Y-%m-%d'),
+                            notes
+                        )
+                        
+                        emails_to_send.append((
+                            email_subject,
+                            personalized_message,
+                            settings.DEFAULT_FROM_EMAIL,
+                            [customer.email]
+                        ))
+                    else:
+                        email_failed_count += 1
+                        results['details'].append(f'No email address for {customer.name} - follow-up created but email not sent')
             
-            results['message'] = f'{len(follow_ups_created)} follow-ups processed successfully'
-            results['follow_up_ids'] = follow_ups_created  # Return IDs for reference
+            if emails_to_send:
+                try:
+                    email_results = send_mass_mail(emails_to_send, fail_silently=False)
+                    
+                    if email_results['failed_count'] > 0:
+                        email_failed_count += email_results['failed_count']
+                        for failed_email in email_results['failed_emails']:
+                            results['details'].append(f'Failed to send follow-up email to {failed_email["recipients"]}: {failed_email["error"]}')
+                    
+                    if send_email:
+                        results['message'] = f'{len(follow_ups_created)} follow-ups processed successfully'
+                        if email_results['sent_count'] > 0:
+                            results['message'] += f', {email_results["sent_count"]} follow-up emails sent'
+                        if email_failed_count > 0:
+                            results['message'] += f', {email_failed_count} emails failed'
+                    else:
+                        results['message'] = f'{len(follow_ups_created)} follow-ups processed successfully'
+                        
+                except Exception as e:
+                    results['details'].append(f'Follow-ups created but email sending failed: {str(e)}')
+                    results['message'] = f'{len(follow_ups_created)} follow-ups processed successfully, but email sending failed'
+            else:
+                results['message'] = f'{len(follow_ups_created)} follow-ups processed successfully'
+                if send_email and email_failed_count > 0:
+                    results['message'] += f' (No emails sent - {email_failed_count} customers without email addresses)'
+            
+            results['follow_up_ids'] = follow_ups_created
+            results['email_stats'] = {
+                'requested': send_email,
+                'sent': len(emails_to_send) - email_failed_count if emails_to_send else 0,
+                'failed': email_failed_count
+            }
         
         elif action == 'add_tag':
             tag_id = action_data.get('tag_id')
