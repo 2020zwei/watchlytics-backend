@@ -76,29 +76,45 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 Value(0, output_field=DecimalField())
             ),
 
-            follow_up_status=Case(
+            # follow_up_status=Case(
+            #     When(
+            #         orders_count=0,
+            #         then=Value('yes')
+            #     ),
+            #     When(
+            #         Q(last_purchase_date__lt=thirty_days_ago) & Q(orders_count__gt=0),
+            #         then=Value('yes')
+            #     ),
+            #     When(
+            #         Q(last_purchase_date__lt=seven_days_ago) & 
+            #         Q(last_purchase_date__gte=thirty_days_ago) &
+            #         Q(orders_count__gt=0),
+            #         then=Value('upcoming')
+            #     ),
+            #     When(
+            #         last_purchase_date__gte=seven_days_ago,
+            #         then=Value('no')
+            #     ),
+            #     default=Value('yes'),  # This makes any uncaught cases return 'yes'
+            #     output_field=CharField(max_length=10)
+            # ),
+
+            follow_up_status = Case(
                 When(
-                    orders_count=0,
+                    follow_ups__due_date__isnull=True,
                     then=Value('yes')
                 ),
                 When(
-                    Q(last_purchase_date__lt=thirty_days_ago) & Q(orders_count__gt=0),
-                    then=Value('yes')
-                ),
-                When(
-                    Q(last_purchase_date__lt=seven_days_ago) & 
-                    Q(last_purchase_date__gte=thirty_days_ago) &
-                    Q(orders_count__gt=0),
-                    then=Value('upcoming')
-                ),
-                When(
-                    last_purchase_date__gte=seven_days_ago,
+                    Q(follow_ups__due_date__lt=timezone.now().date()) & Q(follow_ups__status='pending'),
                     then=Value('no')
                 ),
-                default=Value('yes'),  # This makes any uncaught cases return 'yes'
+                When(
+                    Q(follow_ups__due_date__gte=timezone.now().date()) & Q(follow_ups__status='pending'),
+                    then=Value('upcoming')
+                ),
+                default=Value('yes'),
                 output_field=CharField(max_length=10)
             ),
-
             
             # Keep the boolean follow_up field for backward compatibility
             follow_up=Case(

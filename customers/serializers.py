@@ -25,32 +25,51 @@ class CustomerSerializer(serializers.ModelSerializer):
     def get_status_display(self, obj):
         return 'Active' if obj.status else 'Inactive'
     
+    # def get_follow_up_display(self, obj):
+    #     # First check if we have the annotated field
+    #     if hasattr(obj, 'follow_up_status'):
+    #         status = obj.follow_up_status
+    #     else:
+    #         # Fallback calculation if annotation isn't present
+    #         today = timezone.now().date()
+    #         if obj.orders_count == 0:
+    #             status = 'yes'
+    #         elif obj.last_purchase_date:
+    #             days_since = (today - obj.last_purchase_date).days
+    #             if days_since > 30:
+    #                 status = 'yes'
+    #             elif 7 <= days_since <= 30:
+    #                 status = 'upcoming'
+    #             else:
+    #                 status = 'no'
+    #         else:
+    #             status = 'yes'
+        
+    #     return {
+    #         'yes': 'Yes',
+    #         'upcoming': 'Upcoming',
+    #         'no': 'No'
+    #     }.get(status, 'No')
+    
     def get_follow_up_display(self, obj):
-        # First check if we have the annotated field
         if hasattr(obj, 'follow_up_status'):
             status = obj.follow_up_status
         else:
-            # Fallback calculation if annotation isn't present
             today = timezone.now().date()
-            if obj.orders_count == 0:
+            
+            if not obj.follow_up.due_date:
                 status = 'yes'
-            elif obj.last_purchase_date:
-                days_since = (today - obj.last_purchase_date).days
-                if days_since > 30:
-                    status = 'yes'
-                elif 7 <= days_since <= 30:
-                    status = 'upcoming'
-                else:
-                    status = 'no'
+            elif obj.follow_up.due_date < today:
+                status = 'no'
             else:
-                status = 'yes'
+                status = 'upcoming'
         
         return {
             'yes': 'Yes',
-            'upcoming': 'Upcoming',
+            'upcoming': 'Upcoming', 
             'no': 'No'
         }.get(status, 'No')
-    
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         
