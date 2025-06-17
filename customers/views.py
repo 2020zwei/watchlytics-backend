@@ -1,4 +1,4 @@
-from django.db.models import Count, Sum, Max, Q, F, Value, BooleanField, DecimalField, Avg, Case, When, CharField, Exists, Subquery, OuterRef
+from django.db.models import Count, Sum, Max, Q, F, Value, BooleanField, DecimalField, Avg, Case, When, CharField, Exists, Subquery, OuterRef, IntegerField
 from django.db import models
 from rest_framework.views import APIView
 from django.db.models.functions import Coalesce
@@ -66,6 +66,23 @@ class CustomerViewSet(viewsets.ModelViewSet):
         
         high_value_threshold = float(avg_spending_subquery) * 1.5 if avg_spending_subquery else 1000
         
+        follow_up_subquery = FollowUp.objects.filter(
+            customer=OuterRef('pk')
+        ).annotate(
+            status_priority=Case(
+                When(
+                    Q(due_date__lt=timezone.now().date()) & Q(status='pending'),
+                    then=Value(1)
+                ),
+                When(
+                    Q(due_date__gte=timezone.now().date()) & Q(status='pending'),
+                    then=Value(2)
+                ),
+                default=Value(3),
+                output_field=IntegerField()
+            )
+        ).order_by('status_priority').values('status_priority')[:1]
+        
         queryset = queryset.annotate(
             orders_count=Count('transactions_customer', distinct=True),
             last_purchase_date=Max('transactions_customer__date'),
@@ -99,20 +116,14 @@ class CustomerViewSet(viewsets.ModelViewSet):
             #     output_field=CharField(max_length=10)
             # ),
 
-            follow_up_status = Case(
-                When(
-                    follow_ups__due_date__isnull=True,
-                    then=Value('yes')
-                ),
-                When(
-                    Q(follow_ups__due_date__lt=timezone.now().date()) & Q(follow_ups__status='pending'),
-                    then=Value('no')
-                ),
-                When(
-                    Q(follow_ups__due_date__gte=timezone.now().date()) & Q(follow_ups__status='pending'),
-                    then=Value('upcoming')
-                ),
-                default=Value('yes'),
+            # Use subquery to get follow-up priority without creating duplicates
+            follow_up_priority=Subquery(follow_up_subquery),
+            
+            # Convert priority to status display
+            follow_up_status=Case(
+                When(follow_up_priority=1, then=Value('no')),        # Overdue
+                When(follow_up_priority=2, then=Value('upcoming')),   # Upcoming
+                default=Value('yes'),                                 # Needs follow-up or no follow-ups
                 output_field=CharField(max_length=10)
             ),
             
