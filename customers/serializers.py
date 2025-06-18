@@ -11,6 +11,7 @@ class CustomerSerializer(serializers.ModelSerializer):
     total_spending = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True, default=0)
     follow_up_display = serializers.SerializerMethodField()
     customer_tags = serializers.CharField(read_only=True)
+    
     # status = serializers.SerializerMethodField()
     class Meta:
         model = Customer
@@ -57,12 +58,31 @@ class CustomerSerializer(serializers.ModelSerializer):
         else:
             today = timezone.now().date()
             
-            if not obj.follow_up.due_date:
-                status = 'yes'
-            elif obj.follow_up.due_date < today:
-                status = 'no'
+            # Get the next pending follow-up for this customer
+            next_follow_up = obj.follow_ups.filter(
+                status='pending'
+            ).order_by('due_date').first()
+            
+            if not next_follow_up:
+                # No pending follow-ups - check if customer needs follow-up based on last purchase
+                if not hasattr(obj, 'last_purchase_date') or not obj.last_purchase_date:
+                    status = 'yes'  # No purchases, needs follow-up
+                else:
+                    days_since = (today - obj.last_purchase_date).days
+                    if days_since > 90:  # More than 90 days since last purchase
+                        status = 'yes'
+                    elif days_since > 30:  # 30-90 days since last purchase
+                        status = 'upcoming'
+                    else:
+                        status = 'no'
             else:
-                status = 'upcoming'
+                # Has pending follow-up
+                if next_follow_up.due_date < today:
+                    status = 'yes'  # Overdue
+                elif next_follow_up.due_date == today:
+                    status = 'yes'  # Due today
+                else:
+                    status = 'upcoming'  # Future follow-up
         
         return {
             'yes': 'Yes',
