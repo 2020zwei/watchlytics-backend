@@ -15,7 +15,8 @@ urlpatterns = [
     
     # Stock aging analysis
     path('stock-aging/', views.StockAgingAPIView.as_view(), name='stock_aging'),
-    
+    path('stock-aging/<str:stock_ref>/', views.StockDetailAPIView.as_view(), name='stock-detail'),
+
     # Market price comparison
     path('market-comparison/', views.MarketComparisonAPIView.as_view(), name='market_comparison'),
     

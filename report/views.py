@@ -1132,3 +1132,192 @@ class PurchaseSalesReportAPIView(APIView):
         }
         
         return Response(response_data)
+    
+
+class StockDetailAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, stock_ref):
+        user = request.user
+        today = timezone.now().date()
+        
+        try:
+            products = Product.objects.filter(
+                owner=user,
+                availability='in_stock'
+            ).select_related('category').annotate(
+                age_category=Case(
+                    When(date_purchased__gte=(timezone.now() - timedelta(days=30)).date(), 
+                         then=Value('less_than_30')),
+                    When(date_purchased__gte=(timezone.now() - timedelta(days=60)).date(), 
+                         then=Value('30_to_60')),
+                    When(date_purchased__gte=(timezone.now() - timedelta(days=90)).date(), 
+                         then=Value('60_to_90')),
+                    default=Value('91_plus'),
+                    output_field=CharField()
+                ),
+                days_in_stock=ExpressionWrapper(
+                    ExtractDay(today - F('date_purchased')),
+                    output_field=IntegerField()
+                )
+            )
+            
+            target_group = None
+            stock_groups = {}
+            stock_count = 0
+            
+            for product in products:
+                brand_name = product.category.name if product.category else 'Other'
+                group_key = f"{brand_name}-{product.model_name}"
+                
+                if group_key not in stock_groups:
+                    stock_count += 1
+                    brand_abbr = self.get_brand_abbreviation(brand_name)
+                    generated_ref = f"{brand_abbr}-{stock_count:03d}"
+                    
+                    if generated_ref == stock_ref:
+                        target_group = {
+                            'brand': brand_name,
+                            'model_name': product.model_name,
+                            'group_key': group_key
+                        }
+                        break
+                    
+                    stock_groups[group_key] = generated_ref
+            
+            if not target_group:
+                return Response(
+                    {'error': 'Stock reference not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            detailed_products = Product.objects.filter(
+                owner=user,
+                availability='in_stock',
+                category__name=target_group['brand'],
+                model_name=target_group['model_name']
+            ).select_related('category').annotate(
+                age_category=Case(
+                    When(date_purchased__gte=(timezone.now() - timedelta(days=30)).date(), 
+                         then=Value('less_than_30')),
+                    When(date_purchased__gte=(timezone.now() - timedelta(days=60)).date(), 
+                         then=Value('30_to_60')),
+                    When(date_purchased__gte=(timezone.now() - timedelta(days=90)).date(), 
+                         then=Value('60_to_90')),
+                    default=Value('91_plus'),
+                    output_field=CharField()
+                ),
+                days_in_stock=ExpressionWrapper(
+                    ExtractDay(today - F('date_purchased')),
+                    output_field=IntegerField()
+                )
+            ).order_by('-date_purchased')
+            
+            product_details = []
+            age_summary = {
+                'less_than_30': 0,
+                '30_to_60': 0,
+                '60_to_90': 0,
+                '91_plus': 0
+            }
+            
+            for product in detailed_products:
+                quantity = product.quantity if product.quantity else 1
+                age_summary[product.age_category] += quantity
+                
+                product_details.append({
+                    'id': product.id,
+                    'brand': product.category.name,
+                    'model_name': product.model_name,
+                    'reference_number': product.product_id,
+                    'quantity': quantity,
+                    'serial_number': getattr(product, 'serial_number', ''),
+                    'date_purchased': product.date_purchased,
+                    'days_in_stock': product.days_in_stock,
+                    'age_category': product.age_category,
+                    'purchase_price': getattr(product, 'purchase_price', None),
+                    'selling_price': getattr(product, 'selling_price', None),
+                    'condition': getattr(product, 'condition', ''),
+                    'storage_location': getattr(product, 'storage_location', ''),
+                    'notes': getattr(product, 'notes', '')
+                })
+            
+            return Response({
+                'stock_ref': stock_ref,
+                'brand': target_group['brand'],
+                'model_name': target_group['model_name'],
+                'total_items': len(product_details),
+                'age_summary': age_summary,
+                'products': product_details,
+                'oldest_stock_days': max([p['days_in_stock'] for p in product_details]) if product_details else 0
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error retrieving stock details: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def get_brand_abbreviation(self, brand_name):
+        """Generate brand abbreviation for stock reference (same as main API)"""
+        if not brand_name or brand_name == 'Other':
+            return 'OTH'
+        
+        # Common watch brand abbreviations
+        abbreviations = {
+            'rolex': 'RLX',
+            'patek philippe': 'PP',
+            'audemars piguet': 'AP',
+            'omega': 'OMG',
+            'cartier': 'CAR',
+            'breitling': 'BRT',
+            'tag heuer': 'TAG',
+            'iwc': 'IWC',
+            'jaeger-lecoultre': 'JLC',
+            'vacheron constantin': 'VC',
+            'panerai': 'PAN',
+            'hublot': 'HUB',
+            'tudor': 'TUD',
+            'seiko': 'SEI',
+            'citizen': 'CIT',
+            'casio': 'CAS',
+            'tissot': 'TIS',
+            'longines': 'LON',
+            'hamilton': 'HAM',
+            'orient': 'ORI',
+            'fossil': 'FOS',
+            'timex': 'TMX',
+            'garmin': 'GAR',
+            'apple watch': 'APW',
+            'samsung watch': 'SAW',
+            'fitbit': 'FIT',
+            'suunto': 'SUU',
+            'movado': 'MOV',
+            'frederique constant': 'FC',
+            'montblanc': 'MNT',
+            'zenith': 'ZEN',
+            'chopard': 'CHO',
+            'bvlgari': 'BVL',
+            'richard mille': 'RM',
+            'grand seiko': 'GS',
+            'bell & ross': 'BR',
+            'oris': 'ORS',
+            'mido': 'MID',
+            'certina': 'CER',
+            'rado': 'RAD',
+            'swatch': 'SWA',
+            'maurice lacroix': 'ML',
+            'nomos': 'NOM',
+            'junghans': 'JUN',
+            'g-shock': 'GSH'
+        }
+        
+        brand_lower = brand_name.lower().strip()
+        if brand_lower in abbreviations:
+            return abbreviations[brand_lower]
+        
+        words = brand_name.split()
+        if len(words) >= 2:
+            return ''.join([word[0].upper() for word in words[:3]])
+        else:
+            return brand_name[:3].upper()
