@@ -5,11 +5,13 @@ from django.db.models.functions import Coalesce
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Customer
 from .serializers import CustomerSerializer, CustomerDetailSerializer, CustomerCreateSerializer
 from transactions.serializers import TransactionHistorySerializer
+import openpyxl
+from io import TextIOWrapper
 from rest_framework import generics
 from django.db import transaction
 from django.utils import timezone
@@ -24,6 +26,9 @@ from decimal import Decimal
 from django.conf import settings
 import logging
 from django.core.mail import EmailMessage
+from django.core.exceptions import ValidationError
+import csv
+from django.core.validators import validate_email
 
 
 logger = logging.getLogger(__name__)
@@ -1213,3 +1218,193 @@ class CustomerBulkActionsView(APIView):
             raise ValueError(f"Unknown action: {action}")
         
         return results
+    
+class CustomerCSVUploadAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, *args, **kwargs):
+        uploaded_file = request.FILES.get('excel_file')  # Keep same parameter name as products
+        if not uploaded_file:
+            return Response({'error': 'No file provided.'}, status=400)
+
+        if uploaded_file.size == 0:
+            return Response({'error': 'The uploaded file is empty (zero bytes).'}, status=400)
+
+        filename = uploaded_file.name.lower()
+
+        try:
+            # Parse file based on extension
+            if filename.endswith('.csv'):
+                reader = csv.DictReader(TextIOWrapper(uploaded_file.file, encoding='utf-8'))
+                rows = list(reader)
+                if not rows:
+                    return Response({'error': 'The uploaded CSV file is empty.'}, status=400)
+                
+                non_empty_rows = 0
+                for row in rows:
+                    has_data = False
+                    for key, value in row.items():
+                        if value and (not isinstance(value, str) or value.strip()):
+                            has_data = True
+                            break
+                    if has_data:
+                        non_empty_rows += 1
+                
+                if non_empty_rows == 0:
+                    return Response({'error': 'The uploaded CSV file contains only empty rows.'}, status=400)
+                
+            elif filename.endswith(('.xlsx', '.xls')):
+                wb = openpyxl.load_workbook(uploaded_file)
+                sheet = wb.active
+                if sheet.max_row <= 1:
+                    return Response({'error': 'The uploaded Excel file is empty or contains only headers.'}, status=400)
+                    
+                headers = [cell.value for cell in sheet[1] if cell.value]
+                if not headers:
+                    return Response({'error': 'The uploaded Excel file does not contain valid headers.'}, status=400)
+                    
+                rows = [
+                    {headers[i]: cell.value for i, cell in enumerate(row) if i < len(headers)}
+                    for row in sheet.iter_rows(min_row=2)
+                ]
+                if not rows:
+                    return Response({'error': 'The uploaded Excel file does not contain any data rows.'}, status=400)
+                
+                non_empty_rows = 0
+                for row in rows:
+                    has_data = False
+                    for key, value in row.items():
+                        if value and (not isinstance(value, str) or value.strip()):
+                            has_data = True
+                            break
+                    if has_data:
+                        non_empty_rows += 1
+                
+                if non_empty_rows == 0:
+                    return Response({'error': 'The uploaded Excel file contains only empty rows.'}, status=400)
+            else:
+                return Response({'error': 'Unsupported file format. Please upload CSV or Excel file.'}, status=400)
+        except Exception as e:
+            return Response({'error': f'Error processing file: {str(e)}'}, status=400)
+
+        has_valid_data = False
+        for row in rows:
+            normalized_row = self._normalize_row(row)
+            name = normalized_row.get('name') or normalized_row.get('Name')
+            email = normalized_row.get('email') or normalized_row.get('Email')
+            phone = normalized_row.get('phone') or normalized_row.get('Phone')
+            
+            if name or email or phone:
+                has_valid_data = True
+                break
+        
+        if not has_valid_data:
+            return Response({'error': 'The file does not contain any valid customer data. Each customer requires at least one of: Name, Email, or Phone.'}, status=400)
+
+        created = 0
+        updated = 0
+        errors = []
+        user = request.user
+        
+        for index, row in enumerate(rows, start=2):
+            try:
+                with transaction.atomic():
+                    normalized_row = self._normalize_row(row)
+                    
+                    name = (normalized_row.get('name') or 
+                           normalized_row.get('Name') or 
+                           normalized_row.get('customer_name') or 
+                           normalized_row.get('Customer Name'))
+                    
+                    email = (normalized_row.get('email') or 
+                            normalized_row.get('Email') or 
+                            normalized_row.get('email_address') or 
+                            normalized_row.get('Email Address'))
+                    
+                    phone = (normalized_row.get('phone') or 
+                            normalized_row.get('Phone') or 
+                            normalized_row.get('phone_number') or 
+                            normalized_row.get('Phone Number'))
+                    
+                    address = (normalized_row.get('address') or 
+                              normalized_row.get('Address'))
+                    
+                    notes = (normalized_row.get('notes') or 
+                            normalized_row.get('Notes') or 
+                            normalized_row.get('description') or 
+                            normalized_row.get('Description'))
+                    
+                    if not (name or email or phone):
+                        continue
+                    
+                    if email:
+                        try:
+                            validate_email(email)
+                        except ValidationError:
+                            errors.append({
+                                'row': index,
+                                'error': f'Invalid email format: {email}'
+                            })
+                            continue
+                    
+                    # Check for existing customer
+                    existing_customer = None
+                    if email:
+                        existing_customer = Customer.objects.filter(
+                            user=user,
+                            email=email
+                        ).first()
+                    
+                    # If no existing customer found by email, check by name
+                    if not existing_customer and name:
+                        existing_customer = Customer.objects.filter(
+                            user=user,
+                            name__iexact=name
+                        ).first()
+                    
+                    customer_data = {
+                        'user': user,
+                        'name': name or 'Unnamed Customer',
+                        'email': email,
+                        'phone': phone,
+                        'address': address,
+                        'notes': notes,
+                    }
+                    
+                    customer_data = {k: v for k, v in customer_data.items() if v is not None}
+                    
+                    if existing_customer:
+                        for key, value in customer_data.items():
+                            if key != 'user':  # Don't update user field
+                                setattr(existing_customer, key, value)
+                        existing_customer.save()
+                        updated += 1
+                    else:
+                        if email and Customer.objects.filter(user=user, email=email).exists():
+                            errors.append({
+                                'row': index,
+                                'error': f'Customer with email {email} already exists'
+                            })
+                            continue
+                        
+                        Customer.objects.create(**customer_data)
+                        created += 1
+                    
+            except Exception as e:
+                errors.append({'row': index, 'error': str(e)})
+
+        return Response({
+            'created': created,
+            'updated': updated,
+            'errors': errors,
+            'total_processed': created + updated,
+            'total_rows': len(rows),
+        }, status=201)
+
+    def _normalize_row(self, row):
+        return {
+            key.strip() if isinstance(key, str) else key: 
+            (value.strip() if isinstance(value, str) else value)
+            for key, value in row.items()
+            if key is not None
+        }
