@@ -18,6 +18,7 @@ from .serializers import (
     ExpenseTrackingSerializer, 
     IncomeBreakdownSerializer
 )
+from rest_framework.pagination import PageNumberPagination
 
 
 class DashboardStatsAPIView(APIView):
@@ -800,9 +801,15 @@ class DetailedAnalyticsAPIView(APIView):
         
         return Response(analytics_data, status=status.HTTP_200_OK)
     
+class StandardResultsSetPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
 class IncomeReportsAPIView(APIView):
     """API for income reports with clickable segments showing detailed data"""
     permission_classes = [IsAuthenticated]
+    pagination_class = StandardResultsSetPagination
     
     def get_date_range(self, request):
         date_from = request.GET.get('date_from')
@@ -818,8 +825,8 @@ class IncomeReportsAPIView(APIView):
             
         return year_start, year_end
     
-    def get_actual_income_data(self, user, year_start, year_end):
-        """Get detailed actual income data"""
+    def get_actual_income_data(self, user, year_start, year_end, request):
+        """Get detailed actual income data with pagination"""
         transactions = TransactionHistory.objects.filter(
             user=user,
             transaction_type='sale',
@@ -829,40 +836,58 @@ class IncomeReportsAPIView(APIView):
             customer_name=F('customer__name')
         ).order_by('-date')
         
+        # Paginate transactions
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(transactions, request)
+        
         monthly_summary = list(
             TransactionHistory.objects.filter(
                 user=user,
                 transaction_type='sale',
                 date__range=(year_start, year_end)
-            ).extra(
-                select={'month': 'EXTRACT(month FROM date)'}
-            ).values('month').annotate(
-                total=Sum('sale_price'),
-                count=Count('id')
-            ).order_by('month')
+            ).extra(select={'month': 'EXTRACT(month FROM date)'})
+            .values('month')
+            .annotate(total=Sum('sale_price'), count=Count('id'))
+            .order_by('month')
         )
         
-        return {
-            'transactions': list(transactions),
-            'monthly_summary': monthly_summary
+        response_data = {
+            'monthly_summary': monthly_summary,
+            'transactions': list(page if page is not None else transactions)
         }
+        
+        if page is not None:
+            return paginator.get_paginated_response(response_data)
+        return Response(response_data)
     
-    def get_pending_income_data(self, user):
-        """Get detailed pending income data"""
+    def get_pending_income_data(self, user, request):
+        """Get detailed pending income data with pagination"""
         products = Product.objects.filter(
             owner=user,
             availability='reserved'
+        ).annotate(
+            brand=F('category__name'),
+            reference_number=F('product_id')
         ).values(
-            'id', 'model_name', 'website_price', 'sold_price',
+            'id', 'brand', 'model_name', 'reference_number', 'quantity', 'website_price', 'sold_price',
             'msrp', 'category_id', 'condition'
         ).order_by('-msrp')
         
-        return {
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(products, request)
+        if page is not None:
+            products = page
+        
+        response_data = {
             'products': list(products)
         }
+        
+        if page is not None:
+            return paginator.get_paginated_response(response_data)
+        return response_data
     
-    def get_remaining_target_data(self, user, year_start, year_end):
-        """Get detailed data for remaining target"""
+    def get_remaining_target_data(self, user, year_start, year_end, request):
+        """Get detailed data for remaining target with pagination"""
         actual_income = TransactionHistory.objects.filter(
             user=user,
             transaction_type='sale',
@@ -893,11 +918,20 @@ class IncomeReportsAPIView(APIView):
             'msrp'
         ).order_by('-msrp')
         
-        return {
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(available_products, request)
+        if page is not None:
+            available_products = page
+        
+        response_data = {
             'remaining_amount': float(remaining),
             'target': float(target),
             'available_products': list(available_products)
         }
+        
+        if page is not None:
+            return paginator.get_paginated_response(response_data)
+        return response_data
     
     def get(self, request):
         user = request.user
@@ -908,7 +942,7 @@ class IncomeReportsAPIView(APIView):
             response_data = {}
             
             if not segment_type:
-                # Return summary data if no segment specified
+                # Return summary data if no segment specified (no pagination needed)
                 actual_income = TransactionHistory.objects.filter(
                     user=user,
                     transaction_type='sale',
@@ -931,21 +965,20 @@ class IncomeReportsAPIView(APIView):
                         'year': year_start.year
                     }
                 }
+                return Response(response_data, status=status.HTTP_200_OK)
             else:
-                # Return detailed data for the requested segment
+                # Return detailed data for the requested segment with pagination
                 if segment_type == 'actual':
-                    response_data = self.get_actual_income_data(user, year_start, year_end)
+                    return self.get_actual_income_data(user, year_start, year_end, request)
                 elif segment_type == 'pending':
-                    response_data = self.get_pending_income_data(user)
+                    return self.get_pending_income_data(user, request)
                 elif segment_type == 'remaining':
-                    response_data = self.get_remaining_target_data(user, year_start, year_end)
+                    return self.get_remaining_target_data(user, year_start, year_end, request)
                 else:
                     return Response(
                         {'error': 'Invalid segment type'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
-            
-            return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
             return Response(
