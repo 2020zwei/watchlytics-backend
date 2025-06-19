@@ -365,8 +365,12 @@ class StockAgingAPIView(APIView):
             
             if group_key not in stock_groups:
                 stock_count += 1
+                # Enhanced stock reference with brand abbreviation
+                brand_abbr = self.get_brand_abbreviation(brand_name)
+                stock_ref = f"{brand_abbr}-{stock_count:03d}"
+                
                 stock_groups[group_key] = {
-                    'stock_ref': f"STK{stock_count:03d}",
+                    'stock_ref': stock_ref,
                     'brand': brand_name,
                     'model_name': product.model_name,
                     'less_than_30': 0,
@@ -374,7 +378,8 @@ class StockAgingAPIView(APIView):
                     '60_to_90': 0,
                     '91_plus': 0,
                     'total': 0,
-                    'days_in_stock': 0
+                    'days_in_stock': 0,
+                    'group_key': group_key  # Added for detail API reference
                 }
             
             # Update counts based on age category
@@ -402,7 +407,7 @@ class StockAgingAPIView(APIView):
         # Prepare chart data
         chart_data = []
         for item in stock_aging_data:
-            chart_data.append({
+            chart_item = {
                 'id': item['stock_ref'],
                 'brand': item['brand'],
                 'model': item['model_name'],
@@ -411,8 +416,10 @@ class StockAgingAPIView(APIView):
                 '60_to_90': item['60_to_90'],
                 '91_plus': item['91_plus'],
                 'total': item['total'],
-                'days_in_stock': item['days_in_stock']
-            })
+                'days_in_stock': item['days_in_stock'],
+                'group_key': item['group_key']  # For detail API reference
+            }
+            chart_data.append(chart_item)
         
         # Get available filters
         available_brands = Product.objects.filter(
@@ -441,6 +448,71 @@ class StockAgingAPIView(APIView):
                 'total': sum(group['total'] for group in stock_aging_data)
             }
         })
+    
+    def get_brand_abbreviation(self, brand_name):
+        """Generate brand abbreviation for stock reference"""
+        if not brand_name or brand_name == 'Other':
+            return 'OTH'
+        
+        # Common watch brand abbreviations
+        abbreviations = {
+            'rolex': 'RLX',
+            'patek philippe': 'PP',
+            'audemars piguet': 'AP',
+            'omega': 'OMG',
+            'cartier': 'CAR',
+            'breitling': 'BRT',
+            'tag heuer': 'TAG',
+            'iwc': 'IWC',
+            'jaeger-lecoultre': 'JLC',
+            'vacheron constantin': 'VC',
+            'panerai': 'PAN',
+            'hublot': 'HUB',
+            'tudor': 'TUD',
+            'seiko': 'SEI',
+            'citizen': 'CIT',
+            'casio': 'CAS',
+            'tissot': 'TIS',
+            'longines': 'LON',
+            'hamilton': 'HAM',
+            'orient': 'ORI',
+            'fossil': 'FOS',
+            'timex': 'TMX',
+            'garmin': 'GAR',
+            'apple watch': 'APW',
+            'samsung watch': 'SAW',
+            'fitbit': 'FIT',
+            'suunto': 'SUU',
+            'movado': 'MOV',
+            'frederique constant': 'FC',
+            'montblanc': 'MNT',
+            'zenith': 'ZEN',
+            'chopard': 'CHO',
+            'bvlgari': 'BVL',
+            'richard mille': 'RM',
+            'grand seiko': 'GS',
+            'bell & ross': 'BR',
+            'oris': 'ORS',
+            'mido': 'MID',
+            'certina': 'CER',
+            'rado': 'RAD',
+            'swatch': 'SWA',
+            'maurice lacroix': 'ML',
+            'nomos': 'NOM',
+            'junghans': 'JUN',
+            'g-shock': 'GSH'
+        }
+        
+        brand_lower = brand_name.lower().strip()
+        if brand_lower in abbreviations:
+            return abbreviations[brand_lower]
+        
+        # Generate abbreviation from brand name
+        words = brand_name.split()
+        if len(words) >= 2:
+            return ''.join([word[0].upper() for word in words[:3]])
+        else:
+            return brand_name[:3].upper()
 
 class MonthlyProfitAPIView(APIView):
     permission_classes = [IsAuthenticated]
