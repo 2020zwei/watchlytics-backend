@@ -11,12 +11,14 @@ from decimal import Decimal
 from decimal import Decimal, InvalidOperation
 from transactions.models import TransactionHistory, TransactionItem
 from django.db.models.functions import Coalesce, TruncMonth
+from django.core.paginator import Paginator, PageNotAnInteger, EmptyPage
 from inventory.models import Product
 from .serializers import (
     DashboardStatsSerializer, 
     ExpenseTrackingSerializer, 
     IncomeBreakdownSerializer
 )
+from rest_framework.pagination import PageNumberPagination
 
 
 class DashboardStatsAPIView(APIView):
@@ -50,6 +52,28 @@ class DashboardStatsAPIView(APIView):
             if sales_data['total_quantity_sold'] > 0:
                 average_profit_per_unit = total_profit / sales_data['total_quantity_sold']
             
+            transaction_profit_data = TransactionItem.objects.filter(
+                transaction__user=user,
+                transaction__transaction_type='sale',
+                sale_price__isnull=False,
+                purchase_price__isnull=False
+            ).aggregate(
+                total_transaction_profit=Coalesce(
+                    Sum(F('quantity') * (F('sale_price') - F('purchase_price'))), 
+                    Decimal('0')
+                ),
+                transaction_count=Count('transaction_id', distinct=True)
+            )
+            
+            average_profit_per_transaction = Decimal('0')
+            if transaction_profit_data['transaction_count'] > 0:
+                average_profit_per_transaction = (
+                    transaction_profit_data['total_transaction_profit'] / 
+                    transaction_profit_data['transaction_count']
+                )
+            
+            # Alternative method if you need item-level calculation (commented out)
+            """
             sold_transactions = TransactionItem.objects.filter(
                 transaction__user=user,
                 transaction__transaction_type='sale',
@@ -59,13 +83,15 @@ class DashboardStatsAPIView(APIView):
             
             transaction_profits = []
             for item in sold_transactions:
-                if item.sale_price and item.purchase_price:
+                # Fixed: Added null checks to prevent errors
+                if item.sale_price is not None and item.purchase_price is not None and item.quantity is not None:
                     item_profit = (item.sale_price - item.purchase_price) * item.quantity
                     transaction_profits.append(item_profit)
             
             average_profit_per_transaction = Decimal('0')
             if transaction_profits:
                 average_profit_per_transaction = sum(transaction_profits) / len(transaction_profits)
+            """
             
             stats_data = {
                 'manage_in_stock': product_stats['in_stock'],
@@ -110,8 +136,36 @@ class DrilldownSoldItemsAPIView(APIView):
         user = request.user
         
         try:
-            # Get all sold products with detailed information
-            sold_products = Product.objects.filter(
+            # Get pagination parameters from query params
+            # For sold_products
+            products_page = request.GET.get('products_page', 1)
+            products_page_size = request.GET.get('products_page_size', 10)
+            
+            # For sold_transaction_items
+            transactions_page = request.GET.get('transactions_page', 1)
+            transactions_page_size = request.GET.get('transactions_page_size', 10)
+            
+            # Validate page_sizes
+            try:
+                products_page_size = int(products_page_size)
+                if products_page_size <= 0:
+                    products_page_size = 10
+                if products_page_size > 100:
+                    products_page_size = 100
+            except (ValueError, TypeError):
+                products_page_size = 10
+                
+            try:
+                transactions_page_size = int(transactions_page_size)
+                if transactions_page_size <= 0:
+                    transactions_page_size = 10
+                if transactions_page_size > 100:
+                    transactions_page_size = 100
+            except (ValueError, TypeError):
+                transactions_page_size = 10
+            
+            # Get all sold products with detailed information (QuerySet for pagination)
+            sold_products_queryset = Product.objects.filter(
                 owner=user,
                 availability='sold'
             ).select_related('category').values(
@@ -125,9 +179,28 @@ class DrilldownSoldItemsAPIView(APIView):
                 'date_purchased',
                 'date_sold',
                 'sold_source'
-            )
+            ).order_by('-date_sold')  # Order by most recent sold first
             
-            sold_transaction_items = TransactionItem.objects.filter(
+            products_paginator = Paginator(sold_products_queryset, products_page_size)
+            
+            try:
+                sold_products_page = products_paginator.page(products_page)
+            except PageNotAnInteger:
+                sold_products_page = products_paginator.page(1)
+            except EmptyPage:
+                sold_products_page = products_paginator.page(products_paginator.num_pages)
+            
+            sold_products_with_days = []
+            for product in sold_products_page:
+                product_dict = dict(product)
+                if product['date_purchased'] and product['date_sold']:
+                    days_diff = (product['date_sold'] - product['date_purchased']).days
+                    product_dict['days_in_inventory'] = days_diff
+                else:
+                    product_dict['days_in_inventory'] = None
+                sold_products_with_days.append(product_dict)
+            
+            sold_transaction_items_queryset = TransactionItem.objects.filter(
                 transaction__user=user,
                 transaction__transaction_type='sale'
             ).select_related('product', 'transaction').values(
@@ -141,10 +214,19 @@ class DrilldownSoldItemsAPIView(APIView):
                 'transaction__date',
                 'transaction__name_of_trade',
                 'transaction__customer__name'
-            )
+            ).order_by('-transaction__date')  # Order by most recent transaction first
+            
+            transactions_paginator = Paginator(sold_transaction_items_queryset, transactions_page_size)
+            
+            try:
+                sold_transaction_items_page = transactions_paginator.page(transactions_page)
+            except PageNotAnInteger:
+                sold_transaction_items_page = transactions_paginator.page(1)
+            except EmptyPage:
+                sold_transaction_items_page = transactions_paginator.page(transactions_paginator.num_pages)
             
             transaction_items_with_profit = []
-            for item in sold_transaction_items:
+            for item in sold_transaction_items_page:
                 if item['sale_price'] and item['purchase_price']:
                     profit = (item['sale_price'] - item['purchase_price']) * item['quantity']
                 else:
@@ -165,23 +247,29 @@ class DrilldownSoldItemsAPIView(APIView):
                 }
                 transaction_items_with_profit.append(renamed_item)
             
-            # Add days_in_inventory to sold products
-            sold_products_with_days = []
-            for product in sold_products:
-                product_dict = dict(product)
-                # Calculate days in inventory manually
-                if product['date_purchased'] and product['date_sold']:
-                    days_diff = (product['date_sold'] - product['date_purchased']).days
-                    product_dict['days_in_inventory'] = days_diff
-                else:
-                    product_dict['days_in_inventory'] = None
-                sold_products_with_days.append(product_dict)
-            
             response_data = {
-                'sold_products_count': len(sold_products_with_days),
-                'sold_transaction_items_count': len(transaction_items_with_profit),
-                'sold_products': sold_products_with_days,
-                'sold_transaction_items': transaction_items_with_profit,
+                'sold_products': {
+                    'count': products_paginator.count,  # Total number of sold products
+                    'total_pages': products_paginator.num_pages,
+                    'current_page': sold_products_page.number,
+                    'page_size': products_page_size,
+                    'has_next': sold_products_page.has_next(),
+                    'has_previous': sold_products_page.has_previous(),
+                    'next_page': sold_products_page.next_page_number() if sold_products_page.has_next() else None,
+                    'previous_page': sold_products_page.previous_page_number() if sold_products_page.has_previous() else None,
+                    'results': sold_products_with_days
+                },
+                'sold_transaction_items': {
+                    'count': transactions_paginator.count,  # Total number of transaction items
+                    'total_pages': transactions_paginator.num_pages,
+                    'current_page': sold_transaction_items_page.number,
+                    'page_size': transactions_page_size,
+                    'has_next': sold_transaction_items_page.has_next(),
+                    'has_previous': sold_transaction_items_page.has_previous(),
+                    'next_page': sold_transaction_items_page.next_page_number() if sold_transaction_items_page.has_next() else None,
+                    'previous_page': sold_transaction_items_page.previous_page_number() if sold_transaction_items_page.has_previous() else None,
+                    'results': transaction_items_with_profit
+                },
                 'summary': {
                     'total_sold_value': sum(
                         float(item.get('sale_price', 0) or 0) * item.get('quantity', 1) 
@@ -200,7 +288,7 @@ class DrilldownSoldItemsAPIView(APIView):
                 {'error': f'Could not retrieve sold items details: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+        
 class ProfitAnalyticsAPIView(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -713,9 +801,15 @@ class DetailedAnalyticsAPIView(APIView):
         
         return Response(analytics_data, status=status.HTTP_200_OK)
     
+class StandardResultsSetPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
 class IncomeReportsAPIView(APIView):
     """API for income reports with clickable segments showing detailed data"""
     permission_classes = [IsAuthenticated]
+    pagination_class = StandardResultsSetPagination
     
     def get_date_range(self, request):
         date_from = request.GET.get('date_from')
@@ -731,8 +825,8 @@ class IncomeReportsAPIView(APIView):
             
         return year_start, year_end
     
-    def get_actual_income_data(self, user, year_start, year_end):
-        """Get detailed actual income data"""
+    def get_actual_income_data(self, user, year_start, year_end, request):
+        """Get detailed actual income data with pagination"""
         transactions = TransactionHistory.objects.filter(
             user=user,
             transaction_type='sale',
@@ -742,40 +836,58 @@ class IncomeReportsAPIView(APIView):
             customer_name=F('customer__name')
         ).order_by('-date')
         
+        # Paginate transactions
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(transactions, request)
+        
         monthly_summary = list(
             TransactionHistory.objects.filter(
                 user=user,
                 transaction_type='sale',
                 date__range=(year_start, year_end)
-            ).extra(
-                select={'month': 'EXTRACT(month FROM date)'}
-            ).values('month').annotate(
-                total=Sum('sale_price'),
-                count=Count('id')
-            ).order_by('month')
+            ).extra(select={'month': 'EXTRACT(month FROM date)'})
+            .values('month')
+            .annotate(total=Sum('sale_price'), count=Count('id'))
+            .order_by('month')
         )
         
-        return {
-            'transactions': list(transactions),
-            'monthly_summary': monthly_summary
+        response_data = {
+            'monthly_summary': monthly_summary,
+            'transactions': list(page if page is not None else transactions)
         }
+        
+        if page is not None:
+            return paginator.get_paginated_response(response_data)
+        return Response(response_data)
     
-    def get_pending_income_data(self, user):
-        """Get detailed pending income data"""
+    def get_pending_income_data(self, user, request):
+        """Get detailed pending income data with pagination"""
         products = Product.objects.filter(
             owner=user,
             availability='reserved'
+        ).annotate(
+            brand=F('category__name'),
+            reference_number=F('product_id')
         ).values(
-            'id', 'model_name', 'website_price', 'sold_price',
+            'id', 'brand', 'model_name', 'reference_number', 'quantity', 'website_price', 'sold_price',
             'msrp', 'category_id', 'condition'
         ).order_by('-msrp')
         
-        return {
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(products, request)
+        if page is not None:
+            products = page
+        
+        response_data = {
             'products': list(products)
         }
+        
+        if page is not None:
+            return paginator.get_paginated_response(response_data)
+        return response_data
     
-    def get_remaining_target_data(self, user, year_start, year_end):
-        """Get detailed data for remaining target"""
+    def get_remaining_target_data(self, user, year_start, year_end, request):
+        """Get detailed data for remaining target with pagination"""
         actual_income = TransactionHistory.objects.filter(
             user=user,
             transaction_type='sale',
@@ -793,15 +905,33 @@ class IncomeReportsAPIView(APIView):
         available_products = Product.objects.filter(
             owner=user,
             availability__in=['available', 'in_stock']
+        ).annotate(
+            brand=F('category__name'),
+            reference_number=F('product_id')
         ).values(
-            'id', 'model_name', 'website_price', 'msrp'
+            'id',
+            'brand',
+            'model_name',
+            'reference_number',
+            'quantity',
+            'website_price',
+            'msrp'
         ).order_by('-msrp')
         
-        return {
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(available_products, request)
+        if page is not None:
+            available_products = page
+        
+        response_data = {
             'remaining_amount': float(remaining),
             'target': float(target),
             'available_products': list(available_products)
         }
+        
+        if page is not None:
+            return paginator.get_paginated_response(response_data)
+        return response_data
     
     def get(self, request):
         user = request.user
@@ -812,7 +942,7 @@ class IncomeReportsAPIView(APIView):
             response_data = {}
             
             if not segment_type:
-                # Return summary data if no segment specified
+                # Return summary data if no segment specified (no pagination needed)
                 actual_income = TransactionHistory.objects.filter(
                     user=user,
                     transaction_type='sale',
@@ -835,21 +965,20 @@ class IncomeReportsAPIView(APIView):
                         'year': year_start.year
                     }
                 }
+                return Response(response_data, status=status.HTTP_200_OK)
             else:
-                # Return detailed data for the requested segment
+                # Return detailed data for the requested segment with pagination
                 if segment_type == 'actual':
-                    response_data = self.get_actual_income_data(user, year_start, year_end)
+                    return self.get_actual_income_data(user, year_start, year_end, request)
                 elif segment_type == 'pending':
-                    response_data = self.get_pending_income_data(user)
+                    return self.get_pending_income_data(user, request)
                 elif segment_type == 'remaining':
-                    response_data = self.get_remaining_target_data(user, year_start, year_end)
+                    return self.get_remaining_target_data(user, year_start, year_end, request)
                 else:
                     return Response(
                         {'error': 'Invalid segment type'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
-            
-            return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
             return Response(

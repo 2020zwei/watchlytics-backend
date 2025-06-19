@@ -20,8 +20,8 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'id', 'owner', 'quantity', 'product_id', 'model_name', 'date_purchased', 'date_sold',
-            'hold_time', 'source_of_sale', 'brand', 'category',
+            'id', 'brand', 'model_name', 'product_id', 'quantity', 'owner',  'date_purchased', 'date_sold',
+            'hold_time', 'source_of_sale',  'category',
             'buying_price',  'sold_price', 'wholesale_price','profit', 'profit_margin',
             'shipping_price', 'repair_cost', 'fees', 'commission',
             'msrp', 'website_price', 'purchased_from', 'sold_source', 'listed_on',
