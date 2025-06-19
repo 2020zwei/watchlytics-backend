@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Sum, Count, F, Q, Avg, Case, When, Value, IntegerField, DecimalField, FloatField
 from django.db.models import Q, Case, When, Value, CharField, ExpressionWrapper, F, IntegerField, Func
-
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.db.models.functions import TruncMonth, TruncYear, TruncWeek, Coalesce
 from django.utils import timezone
 from datetime import datetime, timedelta, date
@@ -1136,6 +1136,7 @@ class PurchaseSalesReportAPIView(APIView):
 
 class StockDetailAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CustomPagination
     
     def get(self, request, stock_ref):
         user = request.user
@@ -1213,7 +1214,7 @@ class StockDetailAPIView(APIView):
                 )
             ).order_by('-date_purchased')
             
-            product_details = []
+            # Calculate age summary for ALL products (before pagination)
             age_summary = {
                 'less_than_30': 0,
                 '30_to_60': 0,
@@ -1221,9 +1222,21 @@ class StockDetailAPIView(APIView):
                 '91_plus': 0
             }
             
+            total_items = detailed_products.count()
+            oldest_stock_days = 0
+            
             for product in detailed_products:
                 quantity = product.quantity if product.quantity else 1
                 age_summary[product.age_category] += quantity
+                if product.days_in_stock > oldest_stock_days:
+                    oldest_stock_days = product.days_in_stock
+            
+            paginator = self.pagination_class()
+            paginated_products = paginator.paginate_queryset(detailed_products, request)
+            
+            product_details = []
+            for product in paginated_products:
+                quantity = product.quantity if product.quantity else 1
                 
                 product_details.append({
                     'id': product.id,
@@ -1242,15 +1255,19 @@ class StockDetailAPIView(APIView):
                     'notes': getattr(product, 'notes', '')
                 })
             
-            return Response({
+            # Build response data
+            response_data = {
                 'stock_ref': stock_ref,
                 'brand': target_group['brand'],
                 'model_name': target_group['model_name'],
-                'total_items': len(product_details),
+                'total_items': total_items,
                 'age_summary': age_summary,
                 'products': product_details,
-                'oldest_stock_days': max([p['days_in_stock'] for p in product_details]) if product_details else 0
-            })
+                'oldest_stock_days': oldest_stock_days
+            }
+            
+            # Return paginated response
+            return paginator.get_paginated_response(response_data)
             
         except Exception as e:
             return Response(
