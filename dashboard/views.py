@@ -880,8 +880,17 @@ class IncomeReportsAPIView(APIView):
         available_products = Product.objects.filter(
             owner=user,
             availability__in=['available', 'in_stock']
+        ).annotate(
+            brand=F('category__name'),
+            reference_number=F('product_id')
         ).values(
-            'id', 'model_name', 'website_price', 'msrp'
+            'id',
+            'brand',
+            'model_name',
+            'reference_number',
+            'quantity',
+            'website_price',
+            'msrp'
         ).order_by('-msrp')
         
         return {
