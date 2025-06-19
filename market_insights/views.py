@@ -184,26 +184,64 @@ class MarketDataViewSet(viewsets.ReadOnlyModelViewSet):
                     if source_avg and buying_price:
                         buying_price_float = float(buying_price)
                         source_avg_float = float(source_avg)
-                        price_diff_dollar = round(source_avg_float - buying_price_float, 2)
-                        price_diff_percent = round((price_diff_dollar / buying_price_float) * 100, 2)
                         
-                        if source_avg_float > buying_price_float * 1.05:  # 5% threshold
-                            trend = 'up'
-                        elif source_avg_float < buying_price_float * 0.95:  # 5% threshold
-                            trend = 'down'
+                        min_price = source_stats.get('min_price')
+                        max_price = source_stats.get('max_price')
+                        
+                        min_price_float = float(min_price) if min_price and str(min_price).strip() not in ['', '0', '0.0'] else None
+                        max_price_float = float(max_price) if max_price and str(max_price).strip() not in ['', '0', '0.0'] else None
+                        source_avg_float = source_avg_float if source_avg_float > 0 else None
+                        
+                        if source == 'ebay':
+                            comparison_price = source_avg_float
                         else:
-                            trend = 'stable'
+                            if min_price_float and min_price_float > 0:
+                                comparison_price = min_price_float
+                            elif max_price_float and max_price_float > 0:
+                                comparison_price = max_price_float
+                            elif source_avg_float and source_avg_float > 0:
+                                comparison_price = source_avg_float
+                            else:
+                                comparison_price = None
+                        
+                        if comparison_price and comparison_price > 0 and buying_price_float > 0:
+                            price_diff_dollar = round(comparison_price - buying_price_float, 2)
+                            price_diff_percent = round((price_diff_dollar / buying_price_float) * 100, 2)
+                            
+                            if comparison_price > buying_price_float * 1.05:  # 5% threshold
+                                trend = 'up'
+                            elif comparison_price < buying_price_float * 0.95:  # 5% threshold
+                                trend = 'down'
+                            else:
+                                trend = 'stable'
+                        else:
+                            price_diff_dollar = None
+                            price_diff_percent = None
+                            trend = 'unknown'
 
-                    sources_data[source] = {
-                        'avg_price': round(source_avg, 2) if source_avg else None,
-                        'min_price': source_stats['min_price'],
-                        'max_price': source_stats['max_price'],
-                        'price': round(source_avg, 2) if source == 'ebay' and source_avg else source_stats['min_price'],
-                        'count': source_stats['count'],
-                        'trend': trend,
-                        'price_diff_dollar': price_diff_dollar,
-                        'price_diff_percent': price_diff_percent
-                    }
+                        if source == 'ebay':
+                            display_price = round(source_avg_float, 2) if source_avg_float else None
+                        else:
+                            if min_price_float and min_price_float > 0:
+                                display_price = round(min_price_float, 2)
+                            elif max_price_float and max_price_float > 0:
+                                display_price = round(max_price_float, 2)
+                            elif source_avg_float and source_avg_float > 0:
+                                display_price = round(source_avg_float, 2)
+                            else:
+                                display_price = None
+
+                        sources_data[source] = {
+                            'avg_price': round(source_avg_float, 2) if source_avg_float else None,
+                            'min_price': round(min_price_float, 2) if min_price_float else None,
+                            'max_price': round(max_price_float, 2) if max_price_float else None,
+                            'price': display_price,
+                            'count': source_stats.get('count', 0),
+                            'trend': trend,
+                            'price_diff_dollar': price_diff_dollar,
+                            'price_diff_percent': price_diff_percent
+                        }
+                        
             
             # Calculate potential profit based on market average vs inventory buying price
             potential_profit = None
