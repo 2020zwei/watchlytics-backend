@@ -7,11 +7,13 @@ router = DefaultRouter()
 router.register(r'customers', CustomerViewSet, basename='customer')
 
 urlpatterns = [
-    path('', include(router.urls)),
     path('customers/<int:customer_id>/transactions/', CustomerTransactionsAPIView.as_view(),name='customer-transactions'),
+    path('customers/<int:customer_id>/orders/', CustomerOrderListView.as_view(), name='customer-orders'),
     path('dashboard-metrics/', CustomerDashboardMetricsAPIView.as_view(), name='customer-dashboard-metrics'),
     path('customers/<int:customer_id>/orders/', CustomerOrderListView.as_view(), name='customer-orders'),
     path('customers/bulk/select/', CustomerBulkSelectView.as_view(), name='customer-bulk-select'),
     path('customers/bulk/actions/', CustomerBulkActionsView.as_view(), name='customer-bulk-actions'),
-    path('bulk-upload/', CustomerCSVUploadAPIView.as_view(), name='customer-bulk-upload'),
+    path('customers/bulk-upload/', CustomerCSVUploadAPIView.as_view(), name='customer-bulk-upload'),
+
+    path('', include(router.urls)),
 ]
