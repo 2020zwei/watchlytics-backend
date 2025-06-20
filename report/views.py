@@ -235,11 +235,13 @@ class ExpenseReportAPIView(APIView):
 
             impact = ((repairs_cost + shipping_cost) / total_cost) * 100 if total_cost > 0 else 0
             brand = getattr(getattr(first_product, 'category', None), 'name', None)
+            quantity = first_product.quantity
 
             product_expenses.append({
                 'model': model_name,
                 'reference_number': first_product.product_id,
                 'brand': brand,
+                'quantity': quantity,
                 'purchase_price': float(purchase_cost),
                 'repairs': float(repairs_cost),
                 'shipping': float(shipping_cost),
